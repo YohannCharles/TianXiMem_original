@@ -24,6 +24,7 @@ Hybrid Retrieval → RRF → memory_id 稳定去重 → 【rerank（恰好一次
 
 from __future__ import annotations
 
+import logging
 import math
 import time
 from collections.abc import Sequence
@@ -34,6 +35,13 @@ import httpx
 from tianximem.common.config import DEFAULT_RERANK_ENVELOPE, RERANK_ENVELOPES
 
 __all__ = ["RemoteReranker", "RerankUnavailable", "Reranker"]
+
+logger = logging.getLogger(__name__)
+
+#: Total attempts, including the first call. Used for local rerankers that may
+#: briefly queue under concurrent Search load.
+DEFAULT_RERANK_ATTEMPTS: int = 4
+DEFAULT_RERANK_BACKOFF_S: tuple[float, ...] = (0.2, 0.5, 1.0)
 
 
 class RerankUnavailable(RuntimeError):
@@ -80,8 +88,10 @@ class RemoteReranker:
     全部在 [`../service/pipeline.py`](../service/pipeline.py)——
     这样 `rank/` 不会长出对 SQLite 的依赖，而"候选集合不可能改变"是结构性的（见模块 docstring）。
 
-    ⚠ **不重试**：与 `embed/` 同一个理由——重试会与 AML 的 32 次重试叠加成两层，
-    失败路径变得无法归因。这里失败就是失败，由调用方降级。
+    ``score()`` retries transport and response-shape failures up to
+    ``max_attempts`` total calls. This absorbs temporary local-model queueing
+    under concurrent Search load. The caller still receives
+    ``RerankUnavailable`` after the final attempt and can fall back to RRF.
     """
 
     def __init__(
@@ -93,9 +103,15 @@ class RemoteReranker:
         timeout: float = 30.0,
         envelope: str = DEFAULT_RERANK_ENVELOPE,
         client: httpx.Client | None = None,
+        max_attempts: int = DEFAULT_RERANK_ATTEMPTS,
+        backoff_s: Sequence[float] = DEFAULT_RERANK_BACKOFF_S,
     ) -> None:
         if not base_url or not api_key:
             raise ValueError("base_url 与 api_key 都不得为空")
+        if max_attempts < 1:
+            raise ValueError("rerank max_attempts 必须 ≥ 1")
+        if len(backoff_s) < max_attempts - 1:
+            raise ValueError("rerank backoff_s 必须覆盖所有重试间隔")
         # 构造期拒绝未知信封；否则错误配置会表现为每次检索静默降级。
         if envelope not in RERANK_ENVELOPES:
             raise ValueError(f"envelope 只能是 {sorted(RERANK_ENVELOPES)}，收到 {envelope!r}")
@@ -105,6 +121,8 @@ class RemoteReranker:
         self._timeout = timeout
         self._envelope = envelope
         self._client = client
+        self._max_attempts = max_attempts
+        self._backoff_s = tuple(float(value) for value in backoff_s[: max_attempts - 1])
 
         #: 诊断量，不进入 Search 响应。
         self.calls = 0
@@ -146,18 +164,48 @@ class RemoteReranker:
         if not docs:
             return []
 
-        try:
-            body = self._post(query=query, documents=docs)
-            return self._parse(body, expected=len(docs))
-        except RerankUnavailable as exc:
-            self.last_error = str(exc)
-            raise
-        except Exception as exc:  # noqa: BLE001 — 见下
-            # reranker 是可选远程组件；端点失败或超时时退回未重排的 RRF 顺序。
-            # 同时把异常类型写入 last_error，使端点不可用与未预期缺陷仍可区分。
-            message = f"rerank 未预期的失败（{type(exc).__name__}）：{exc}"
-            self.last_error = message
-            raise RerankUnavailable(message) from exc
+        last_exc: RerankUnavailable | None = None
+        for attempt in range(1, self._max_attempts + 1):
+            try:
+                body = self._post(query=query, documents=docs)
+                scores = self._parse(body, expected=len(docs))
+                if attempt > 1:
+                    logger.info(
+                        "rerank succeeded after retry model=%s attempt=%d/%d",
+                        self._model,
+                        attempt,
+                        self._max_attempts,
+                    )
+                return scores
+            except RerankUnavailable as exc:
+                last_exc = exc
+            except Exception as exc:  # noqa: BLE001 — 见下
+                # reranker 是可选远程组件；端点失败或超时时退回未重排的 RRF 顺序。
+                # 同时把异常类型写入 last_error，使端点不可用与未预期缺陷仍可区分。
+                message = f"rerank 未预期的失败（{type(exc).__name__}）：{exc}"
+                last_exc = RerankUnavailable(message)
+
+            self.last_error = str(last_exc)
+            if attempt < self._max_attempts:
+                delay = self._backoff_s[attempt - 1]
+                logger.warning(
+                    "rerank attempt failed model=%s attempt=%d/%d retry_in_s=%.3f error=%s",
+                    self._model,
+                    attempt,
+                    self._max_attempts,
+                    delay,
+                    last_exc,
+                )
+                time.sleep(delay)
+
+        assert last_exc is not None
+        logger.error(
+            "rerank retries exhausted model=%s attempts=%d error=%s",
+            self._model,
+            self._max_attempts,
+            last_exc,
+        )
+        raise last_exc
 
     def _post(self, *, query: str, documents: Sequence[str]) -> object:
         """发一次请求并解出 JSON。**任何 HTTP 层问题都转成 `RerankUnavailable`。**"""

@@ -55,8 +55,18 @@ uv run python -m tianximem.dev down
 | `AML_API_KEY` | Chat key. |
 | `AML_MODEL` | Chat model ID. |
 | `TIANXIMEM_RERANKER_*` | Optional rerank endpoint and identity. |
+| `HTTP_PROXY` / `HTTPS_PROXY` | Optional outbound proxy used by model clients. |
+| `NO_PROXY` | Internal services and direct endpoints that must bypass the proxy. |
+| `TIANXIMEM_METRICS_PATH` | Telemetry snapshot path; compose writes `/data/metrics.json`. |
 
 If a model gateway runs on the Docker host, use `host.docker.internal` from inside the application container. `127.0.0.1` refers to the container itself.
+
+When an outbound proxy is required, `host.docker.internal` resolves the Docker host
+gateway. The Clash/mihomo listener must bind a Docker-reachable address instead of
+only loopback, and its `lan-allowed-ips` must restrict clients to the Docker
+subnets. Keep `qdrant`, `host.docker.internal`, and other internal targets in
+`NO_PROXY`; otherwise `HTTP_PROXY` sends internal hostnames to the proxy and
+breaks container DNS.
 
 ## Profiles
 

@@ -91,8 +91,8 @@ def _app_with_capture(wired: Wired, cap: RequestCapture):
 def test_capture_is_off_by_default(tmp_path: Path) -> None:
     """**代码内置缺省**是关：配置快照缺键时按"采集关闭"跑。
 
-    ⚠ 与 `configs/default.yaml` 的基线（`true`）是两处口径，形状同
-    `agentic.enabled` / `router.enabled`——本用例只钉前者。
+    ⚠ 与 `configs/default.yaml` 的基线（`false`）保持一致，形状同
+    `agentic.enabled` / `router.enabled`。
     """
     cfg = _load(tmp_path)
     assert cfg.capture.enabled is False

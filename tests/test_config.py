@@ -333,6 +333,8 @@ def test_default_profile_loads_the_repo_yaml(config_dir: Path) -> None:
     assert cfg.retrieval.rrf.weights == (0.5, 0.5)
     assert cfg.retrieval.query_instruction == ""
     assert cfg.retrieval.grounded_evidence is True
+    assert cfg.models.embedder == "text-embedding-v4"
+    assert cfg.capture.enabled is False
     assert cfg.server.workers == 1
     # 当前默认启用日期前缀，这条断言固定该配置行为。
     assert cfg.packaging.inject_abs_time is True

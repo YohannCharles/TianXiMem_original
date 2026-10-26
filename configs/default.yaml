@@ -9,7 +9,7 @@
 
 models:
   # Server-side model ID. It participates in the embedding cache coordinate.
-  embedder: Qwen/Qwen3-Embedding-4B
+  embedder: text-embedding-v4
 
 storage:
   sqlite:
@@ -120,6 +120,6 @@ agentic:
 
 capture:
   # C: record raw Add/Search requests for protocol diagnostics.
-  enabled: true
+  enabled: false
   # C: rotate to a new file after this many bytes.
   max_bytes: 52428800

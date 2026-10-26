@@ -9,7 +9,7 @@ and fallback rules are documented in [`../architecture.md`](../architecture.md).
 
 | Key | Product value |
 | --- | --- |
-| `models.embedder` | `Qwen/Qwen3-Embedding-4B` |
+| `models.embedder` | `text-embedding-v4` |
 | `retrieval.grounded_evidence` | `true` |
 | `retrieval.grounded_planner.enabled` | `true` |
 | `packaging.inject_abs_time` | `true` |
@@ -19,7 +19,7 @@ and fallback rules are documented in [`../architecture.md`](../architecture.md).
 | `router.enabled` | `true` |
 | `agentic.enabled` | `true` |
 | `agentic.mode` | `plan` |
-| `capture.enabled` | `true` |
+| `capture.enabled` | `false` |
 
 Profiles override only keys that intentionally differ from the product profile:
 

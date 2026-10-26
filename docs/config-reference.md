@@ -43,7 +43,7 @@ built-in defaults
 
 | Key | Default | Class | Meaning |
 | --- | --- | --- | --- |
-| `models.embedder` | `Qwen/Qwen3-Embedding-4B` | C | Server-side embedding model ID. |
+| `models.embedder` | `text-embedding-v4` | C | Server-side embedding model ID. |
 | `models.embed_dim` | `1024` | B | Expected embedding dimension; the API response remains authoritative. |
 | `storage.sqlite.busy_timeout_ms` | `5000` | C | SQLite writer wait limit. |
 | `storage.qdrant.collection` | `memories` | C | Qdrant collection namespace. |
@@ -91,7 +91,7 @@ built-in defaults
 | `agentic.prompt_version` | `coq-original` | B | React prompt version assertion. |
 | `agentic.plan_decompose_prompt_version` | `plan-decompose-v2` | B | Plan decomposition prompt version assertion. |
 | `agentic.plan_step_prompt_version` | `plan-step-v2` | B | Plan step prompt version assertion. |
-| `capture.enabled` | `true` | C | Record raw Add/Search requests. |
+| `capture.enabled` | `false` | C | Record raw Add/Search requests. |
 | `capture.max_bytes` | `52428800` | C | Request capture file rotation size. |
 
 ## Environment Variables

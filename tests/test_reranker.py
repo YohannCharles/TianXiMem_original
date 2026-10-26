@@ -154,6 +154,7 @@ def _remote(
         timeout=timeout,
         envelope=envelope,
         client=client,
+        backoff_s=(0.0, 0.0, 0.0),
     )
 
 
@@ -463,6 +464,49 @@ def test_transport_failures_become_rerank_unavailable(
     with pytest.raises(RerankUnavailable, match=match):
         reranker.score(query="q", documents=["A"])
     assert reranker.last_error is not None  # ★ 降级必须留下痕迹
+    assert reranker.calls == reranker._max_attempts  # noqa: SLF001
+
+
+def test_retry_succeeds_after_two_transient_failures(caplog) -> None:  # noqa: ANN001
+    outcomes = iter(
+        [
+            httpx.Response(503, json={"detail": "busy"}),
+            httpx.Response(503, json={"detail": "busy"}),
+            httpx.Response(
+                200,
+                json={"results": [_result(0, 0.9), _result(1, 0.1)]},
+            ),
+        ]
+    )
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return next(outcomes)
+
+    reranker = _remote(handler)
+    with caplog.at_level("INFO", logger="tianximem.rank.reranker"):
+        scores = reranker.score(query="q", documents=["A", "B"])
+
+    assert scores == [0.9, 0.1]
+    assert reranker.calls == 3
+    assert "succeeded after retry" in caplog.text
+    assert "attempt failed" in caplog.text
+
+
+@pytest.mark.parametrize(
+    "kwargs, match",
+    [
+        ({"max_attempts": 0}, "max_attempts"),
+        ({"max_attempts": 3, "backoff_s": (0.1,)}, "backoff_s"),
+    ],
+)
+def test_constructor_rejects_invalid_retry_configuration(kwargs: dict, match: str) -> None:
+    with pytest.raises(ValueError, match=match):
+        RemoteReranker(
+            base_url="https://gw.test/v1",
+            api_key="k",
+            model="m",
+            **kwargs,
+        )
 
 
 def _raise(exc: Exception) -> Callable[[httpx.Request], httpx.Response]:

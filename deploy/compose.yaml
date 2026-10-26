@@ -21,6 +21,7 @@ services:
       TIANXIMEM_SQLITE_PATH: /data/tianxi.db
       TIANXIMEM_EMBED_CACHE_DIR: /data/embed_cache
       TIANXIMEM_CAPTURE_PATH: /data/capture/requests.jsonl
+      TIANXIMEM_METRICS_PATH: /data/metrics.json
       TIANXIMEM_WORKERS: "1"
     volumes:
       - tianxi_data:/data

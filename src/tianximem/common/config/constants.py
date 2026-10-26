@@ -180,17 +180,9 @@ DEFAULT_COQ_TIMEOUT_S: Final[float] = 30.0
 
 #: 多跳执行器单次生成的输出上限（token，`agentic.max_output_tokens`）。
 #:
-#: ⚠ 它**不是**路由器的 8：那里只回一个枚举值，这里要回四个字段的 JSON
-#: （其中 `new_query` 是一句自然语言）。给 256 是**成本护栏**——
-#: 够写一句查询加上 JSON 骨架，而超出的部分一定是模型在附加解释。
-DEFAULT_COQ_MAX_OUTPUT_TOKENS: Final[int] = 256
-
-#: 每轮喂给模型的文档总量上限（token，`agentic.max_prompt_tokens`）。
-#:
-#: 它与 `budget.max_tokens` 不是同一个量：后者是返回给 AML 的答案窗口预算，
-#: 这里是多跳执行器单次提示词的预算。预算先为已选证据保留空间，再按名次加入本轮候选，
-#: 避免历史证据因当前轮名次较低而被静默挤掉。
-DEFAULT_COQ_MAX_PROMPT_TOKENS: Final[int] = 6000
+#: ⚠ 它**不是**路由器的 8：那里要回四个字段的 JSON（其中 `new_query`
+#: 是一句自然语言）。512 为完整决策和下一跳查询留出空间。
+DEFAULT_COQ_MAX_OUTPUT_TOKENS: Final[int] = 512
 
 #: 多跳提示词的默认版本（`agentic.prompt_version`）。
 #:
@@ -215,13 +207,11 @@ AGENTIC_MODES: Final[tuple[str, ...]] = ("react", "plan")
 
 #: Plan 模式单次生成的输出上限（token，`agentic.plan_max_output_tokens`）。
 #:
-#: ⚠ **它不是 `DEFAULT_COQ_MAX_OUTPUT_TOKENS`（256）**，两者不能合并：
+#: ⚠ **它不是 `DEFAULT_COQ_MAX_OUTPUT_TOKENS`（512）**，两者不能合并：
 #: CoQ 回的是**定长四字段**，而 Plan 的两次调用都回**带自由文本的 JSON**——
 #: 拆解回 1～4 步（每步一句子问题），逐轮回一段答案 ＋ 若干条逐字引句 ＋ 一句下一查询。
-#: 256 会把四步计划**从中间截断**，而截断的表现是"JSON 不完整 ⇒ 计划作废 ⇒
-#: 这一题退回混合检索"，**看起来像模型不行**。给 768 是成本护栏：
-#: 够写满这两份结构，而超出的部分一定是模型在附加解释。
-DEFAULT_PLAN_MAX_OUTPUT_TOKENS: Final[int] = 768
+#: 1536 为完整计划和逐轮答案留出空间，避免输出在中途截断后表现为无效 JSON。
+DEFAULT_PLAN_MAX_OUTPUT_TOKENS: Final[int] = 1536
 
 #: Plan 拆解提示词的默认版本（`agentic.plan_decompose_prompt_version`）。
 #:

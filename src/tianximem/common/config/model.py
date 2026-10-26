@@ -13,7 +13,6 @@ from .constants import (
     DEFAULT_AGENTIC_MODE,
     DEFAULT_CAPTURE_MAX_BYTES,
     DEFAULT_COQ_MAX_OUTPUT_TOKENS,
-    DEFAULT_COQ_MAX_PROMPT_TOKENS,
     DEFAULT_COQ_MAX_ROUNDS,
     DEFAULT_COQ_PER_ROUND_TOP_K,
     DEFAULT_COQ_PROMPT_VERSION,
@@ -332,9 +331,6 @@ class AgenticConfig:
 
     #: 提前停止的置信度门槛。⚠ 只在"已判定充分"之后起作用，见该常量的说明。
     sufficiency_threshold: float = DEFAULT_COQ_SUFFICIENCY_THRESHOLD
-
-    #: 每轮 prompt 的 token 上限。**与 `budget.max_tokens` 不是同一个量**。
-    max_prompt_tokens: int = DEFAULT_COQ_MAX_PROMPT_TOKENS
 
     #: 单次生成的输出上限（token）。⚠ **React 模式用这个值**（回一个四字段的 JSON）。
     #: Plan 模式用 `plan_max_output_tokens`——两者的输出形状不同，见那个常量的说明。

@@ -79,6 +79,12 @@ class FakeCounter:
     def count(self, text: str) -> int:
         return len(text)
 
+    def encode_ids(self, text: str) -> list[int]:
+        return list(range(len(text)))
+
+    def decode_ids(self, ids: Sequence[int]) -> str:
+        return "x" * len(ids)
+
 
 @pytest.fixture
 def counter() -> FakeCounter:
@@ -489,9 +495,9 @@ def seed_in_add(
     邻接按**与 `pairing.link_blocks` 完全相同的规则**连：**只连完整 QA**，
     不完整的（`question` / `answer` 有一个是 `None`）两侧都是 `None`。
 
-    ⚠ **必须一次写完**：`prev` / `next` 是**写下时**算好的，没有事后回填
-。想造"中间缺一块"的形状，
-    就**别落那一块**——它的邻居的指针仍然指着它，而它不在库里 ⇒ 段自然断开。
+    ⚠ **必须一次写完**：`prev` / `next` 是**写下时**算好的，没有事后回填。
+    想造"中间缺一块"的形状，就**别落那一块**——它的邻居的指针仍然指着它，
+    而它不在库里 ⇒ 段自然断开。
     """
     ids = [make_pair_id(user_id, session_id, request_id, index) for index in range(len(entries))]
     complete = [i for i, (q, a) in enumerate(entries) if q is not None and a is not None]

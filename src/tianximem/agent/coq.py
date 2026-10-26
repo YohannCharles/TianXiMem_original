@@ -41,7 +41,6 @@ from typing import Final
 from tianximem.agent.coq_prompt import COQ_PROMPT, COQ_PROMPT_SLOTS, COQ_PROMPT_VERSION
 from tianximem.agent.parse import CoqDecision, InvalidCoqOutput, parse_coq_decision
 from tianximem.common.render import day_granularity, render_pair
-from tianximem.common.tokens import TokenCounter
 from tianximem.llm import LlmClient, LlmUnavailable
 from tianximem.rank import Reranker, RerankUnavailable
 from tianximem.retrieve.fusion import Candidate, HybridRetriever
@@ -69,7 +68,6 @@ STOP_REASONS: Final[tuple[str, ...]] = (
     "llm_unavailable",
     "llm_error",
     "retrieval_error",
-    "prompt_budget_exceeded",
 )
 
 #: 最终精排 Query 的两种构造方式。
@@ -134,7 +132,7 @@ class RoundRecord:
     candidate_ids: tuple[str, ...]
     #: 模型指认的证据 ID，已由数字索引换成稳定 ID。
     selected_ids: tuple[str, ...]
-    #: 因提示词 token 预算未进入文档列表的候选数。
+    #: 因真源缺行未进入文档列表的候选数。
     dropped_documents: int
     #: `disabled` / `called` / `degraded`。
     rerank_status: str
@@ -214,13 +212,11 @@ class CoqAgent:
         store: SqliteStore,
         retriever: HybridRetriever,
         llm: LlmClient,
-        counter: TokenCounter,
         reranker: Reranker | None = None,
         max_rounds: int = 3,
         per_round_top_k: int = 20,
         sufficiency_threshold: float = 0.8,
-        max_prompt_tokens: int = 6000,
-        max_output_tokens: int = 256,
+        max_output_tokens: int = 512,
         temperature: float = 0.0,
         round_rerank_enabled: bool = True,
         final_rerank_query_mode: str = "combined",
@@ -240,8 +236,6 @@ class CoqAgent:
             raise ValueError("agentic.per_round_top_k 必须 ≥ 1")
         if not 0.0 <= sufficiency_threshold <= 1.0:
             raise ValueError("agentic.sufficiency_threshold 必须在 0..1 之间")
-        if max_prompt_tokens <= 0:
-            raise ValueError("agentic.max_prompt_tokens 必须为正")
         if max_output_tokens <= 0:
             raise ValueError("agentic.max_output_tokens 必须为正")
         if temperature < 0:
@@ -255,12 +249,10 @@ class CoqAgent:
         self._store = store
         self._retriever = retriever
         self._llm = llm
-        self._counter = counter
         self._reranker = reranker
         self._max_rounds = max_rounds
         self._per_round_top_k = per_round_top_k
         self._sufficiency_threshold = sufficiency_threshold
-        self._max_prompt_tokens = max_prompt_tokens
         self._max_output_tokens = max_output_tokens
         self._temperature = temperature
         self._round_rerank = round_rerank_enabled
@@ -349,27 +341,7 @@ class CoqAgent:
             state.normalized.add(normalize_query(round_query))
 
             # ⑤ 组织文档列表（本轮 Top-N ＋ 历史已选证据）
-            documents, document_ids, dropped, budget_exceeded = self._build_documents(
-                state, top_ids
-            )
-            if budget_exceeded:
-                stop_reason = "prompt_budget_exceeded"
-                records.append(
-                    RoundRecord(
-                        index=index,
-                        query=round_query,
-                        recalled_candidates=len(recalled),
-                        document_ids=(),
-                        candidate_ids=top_ids,
-                        selected_ids=(),
-                        dropped_documents=dropped,
-                        rerank_status=rerank_status,
-                        stop_reason=stop_reason,
-                        retrieval_latency_ms=retrieval_ms,
-                        rerank_latency_ms=rerank_ms,
-                    )
-                )
-                break
+            documents, document_ids, dropped = self._build_documents(state, top_ids)
 
             # ⑥ 一次 LLM：充分性 + 选证据 + 下一跳
             llm_started = monotonic()
@@ -499,35 +471,19 @@ class CoqAgent:
 
     def _build_documents(
         self, state: _State, top_ids: Sequence[str]
-    ) -> tuple[list[str], tuple[str, ...], int, bool]:
-        """本轮发给模型的文档列表 + 索引映射 + 丢弃数 + 是否**因预算整体失败**。
+    ) -> tuple[list[str], tuple[str, ...], int]:
+        """按精排名次组装本轮 Top-N，并追加此前已选证据。
 
-        两个约束同时成立：
+        顺序是 **本轮优先、历史在后**。索引映射随后一次性建立，之后不再改动
+        文档顺序——顺序一动，模型给的索引就指向别的证据。
 
-        * **历史已选证据不能因为本轮名次低就丢掉**⇒ 先按预算给历史留够位置；
-        * 本轮 Top-N 是这一轮的目的 ⇒ 剩下的预算按名次补。
-
-        ⚠ 顺序是 **本轮优先、历史在后**。索引映射随后一次性建立，
-        建立后不再改动文档顺序——顺序一动，
-        模型给的索引就指向别的证据。
-
-        ## `budget_exceeded` 出口
-
-        正常循环只允许模型选择当前轮实际发送的文档，因此历史文档总量应始终落在
-        提示词预算内。该出口处理状态不一致或历史本身超出预算的情况：停止并返回失败，
-        不组织一份被截断的输入。
+        这里**没有输入 token 预算**：当前轮 Top-N 中的可读取文档全部进入 prompt，
+        历史已选证据也全部保留。两者按稳定 ID 去重；唯一跳过的情况是真源缺行。
         """
         history_ids = [memory_id for memory_id in state.selected if memory_id in state.bodies]
         history = [(memory_id, self._document_body(state, memory_id)) for memory_id in history_ids]
-        history_tokens = sum(self._document_cost(state, memory_id) for memory_id in history_ids)
-        if history_tokens > self._max_prompt_tokens:
-            # 连历史证据都放不下 ⇒ **不组织一个残缺的输入**，安全停下。
-            return [], (), len(top_ids), True
-
-        budget = self._max_prompt_tokens - history_tokens
         selected_set = set(history_ids)
         fresh: list[tuple[str, str]] = []
-        used_tokens = 0
         dropped = 0
         for memory_id in top_ids:
             if memory_id in selected_set:
@@ -535,11 +491,6 @@ class CoqAgent:
             if memory_id not in state.bodies:
                 dropped += 1  # 真源缺行 ⇒ 它进不了文档，也就不能被选中
                 continue
-            cost = self._document_cost(state, memory_id)
-            if used_tokens + cost > budget:
-                dropped += 1
-                continue
-            used_tokens += cost
             fresh.append((memory_id, self._document_body(state, memory_id)))
 
         # ⚠ **渲染只在这里做一次**：`body` 是 `render_pair` 的裸产物，索引头由下面这一行加上。
@@ -550,7 +501,7 @@ class CoqAgent:
             _render_document(index, body, state.days.get(memory_id, ""))
             for index, (memory_id, body) in enumerate(ordered)
         ]
-        return documents, tuple(memory_id for memory_id, _ in ordered), dropped, False
+        return documents, tuple(memory_id for memory_id, _ in ordered), dropped
 
     def _decide(
         self, *, original: str, used: Sequence[str], documents: Sequence[str]
@@ -635,15 +586,6 @@ class CoqAgent:
     def _document_body(self, state: _State, memory_id: str) -> str:
         """一段文档的**正文**（`render_pair` 的产物，**不带索引头**）。"""
         return state.bodies[memory_id]
-
-    def _document_cost(self, state: _State, memory_id: str) -> int:
-        """一条文档的 token 成本——**按它最终呈现的样子算**（含索引头与日期行）。
-
-        ⚠ 只数正文会让预算永远偏松，而"超了"这件事**不会报错**：它表现为
-        模型收到的提示词比配置说的更大（更慢、更贵、更不准），仅此而已。
-        """
-        day = state.days.get(memory_id, "")
-        return self._counter.count(_render_document(0, self._document_body(state, memory_id), day))
 
     def _fetch(self, memory_ids: Sequence[str]) -> list[QaPair | None]:
         with self._store.read() as conn:

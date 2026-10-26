@@ -19,7 +19,7 @@ from tianximem.common.config import (
     ConfigError,
 )
 from tianximem.common.render import template_version
-from tianximem.common.tokens import TokenCounter, load_counter
+from tianximem.common.tokens import load_counter
 from tianximem.embed.base import (
     CachingEmbedder,
     DiskVectorCache,
@@ -148,7 +148,6 @@ def build_services(config: AppConfig) -> Services:
                 config,
                 store=store,
                 retriever=retriever,
-                counter=counter,
                 reranker=reranker,
             ),
             agentic_force=config.agentic.force,
@@ -170,6 +169,7 @@ def build_llm(config: AppConfig, *, timeout: float | None = None) -> LlmClient |
         api_key=config.llm_api_key,
         model=config.llm_model,
         timeout=config.router.timeout_seconds if timeout is None else timeout,
+        counter=load_counter(config.budget.tokenizer),
     )
 
 
@@ -213,7 +213,6 @@ def build_agentic(
     *,
     store: SqliteStore,
     retriever: HybridRetriever,
-    counter: TokenCounter,
     reranker: Reranker | None,
 ) -> AgenticSearch | None:
     if not config.agentic.enabled:
@@ -228,11 +227,9 @@ def build_agentic(
             store=store,
             retriever=retriever,
             llm=client,
-            counter=counter,
             reranker=reranker,
             max_rounds=config.agentic.max_rounds,
             per_round_top_k=config.agentic.per_round_top_k,
-            max_prompt_tokens=config.agentic.max_prompt_tokens,
             max_output_tokens=config.agentic.plan_max_output_tokens,
             temperature=config.agentic.temperature,
             round_rerank_enabled=config.agentic.round_rerank_enabled,
@@ -245,12 +242,10 @@ def build_agentic(
         store=store,
         retriever=retriever,
         llm=client,
-        counter=counter,
         reranker=reranker,
         max_rounds=config.agentic.max_rounds,
         per_round_top_k=config.agentic.per_round_top_k,
         sufficiency_threshold=config.agentic.sufficiency_threshold,
-        max_prompt_tokens=config.agentic.max_prompt_tokens,
         max_output_tokens=config.agentic.max_output_tokens,
         temperature=config.agentic.temperature,
         round_rerank_enabled=config.agentic.round_rerank_enabled,

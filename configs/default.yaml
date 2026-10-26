@@ -102,12 +102,10 @@ agentic:
   per_round_top_k: 20
   # C: react mode early-stop confidence threshold.
   sufficiency_threshold: 0.8
-  # C: agent prompt budget per round.
-  max_prompt_tokens: 6000
   # C: react output budget.
-  max_output_tokens: 256
+  max_output_tokens: 512
   # C: plan output budget.
-  plan_max_output_tokens: 768
+  plan_max_output_tokens: 1536
   # C: per-call timeout.
   timeout_seconds: 30.0
   temperature: 0.0

@@ -15,7 +15,6 @@ from .constants import (
     DEFAULT_AGENTIC_MODE,
     DEFAULT_CAPTURE_MAX_BYTES,
     DEFAULT_COQ_MAX_OUTPUT_TOKENS,
-    DEFAULT_COQ_MAX_PROMPT_TOKENS,
     DEFAULT_COQ_MAX_ROUNDS,
     DEFAULT_COQ_PER_ROUND_TOP_K,
     DEFAULT_COQ_PROMPT_VERSION,
@@ -263,7 +262,13 @@ def _retrieval(raw: object) -> RetrievalConfig:
     p = _group(
         g.get("grounded_planner"),
         where="retrieval.grounded_planner",
-        allowed={"enabled", "timeout_seconds", "max_output_tokens", "temperature", "prompt_version"},
+        allowed={
+            "enabled",
+            "timeout_seconds",
+            "max_output_tokens",
+            "temperature",
+            "prompt_version",
+        },
     )
     evidence = _bool(
         g.get("grounded_evidence"),
@@ -462,7 +467,6 @@ def _agentic(raw: object) -> AgenticConfig:
             "max_rounds",
             "per_round_top_k",
             "sufficiency_threshold",
-            "max_prompt_tokens",
             "max_output_tokens",
             "plan_max_output_tokens",
             "timeout_seconds",
@@ -517,11 +521,6 @@ def _agentic(raw: object) -> AgenticConfig:
             g.get("sufficiency_threshold"),
             where="agentic.sufficiency_threshold",
             default=DEFAULT_COQ_SUFFICIENCY_THRESHOLD,
-        ),
-        max_prompt_tokens=_int(
-            g.get("max_prompt_tokens"),
-            where="agentic.max_prompt_tokens",
-            default=DEFAULT_COQ_MAX_PROMPT_TOKENS,
         ),
         max_output_tokens=_int(
             g.get("max_output_tokens"),

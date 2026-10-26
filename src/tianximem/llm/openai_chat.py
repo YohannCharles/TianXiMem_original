@@ -29,6 +29,7 @@ import time
 
 import httpx
 
+from tianximem.common.tokens import LLM_MAX_INPUT_TOKENS, TokenCounter
 from tianximem.llm.base import DEFAULT_MAX_OUTPUT_TOKENS, LlmUnavailable
 
 __all__ = ["OpenAiCompatChat"]
@@ -70,20 +71,30 @@ class OpenAiCompatChat:
         model: str,
         timeout: float = 10.0,
         client: httpx.Client | None = None,
+        counter: TokenCounter | None = None,
+        max_input_tokens: int = LLM_MAX_INPUT_TOKENS,
     ) -> None:
         if not base_url or not api_key:
             raise ValueError("base_url 与 api_key 都不得为空")
+        if max_input_tokens <= 0:
+            raise ValueError("LLM 输入 token 上限必须为正")
         # `model` 允许为空：部分网关会忽略该字段。是否需要强制配置由装配和启动校验决定。
         self._base_url = base_url.rstrip("/")
         self._api_key = api_key
         self._model = model
         self._timeout = timeout
         self._client = client
+        self._counter = counter
+        self._max_input_tokens = max_input_tokens
 
         #: 诊断量，不进入 Search 响应。
         self.calls = 0
         self.last_latency_ms: float | None = None
         self.last_error: str | None = None
+        self.last_prompt_tokens: int | None = None
+        self.last_sent_tokens: int | None = None
+        self.last_dropped_tokens = 0
+        self.last_truncated = False
         #: 端点回的 `usage`（token 计数）。**`None` = 这一档端点没回它**——
         #: 与 `last_latency_ms` 同一个性质：只给诊断与成本分析读，**不是契约**。
         #: ⚠ 它**不进 `LlmClient` 协议**：协议是"文本进、文本出"（见 `base.py`），
@@ -121,6 +132,7 @@ class OpenAiCompatChat:
         max_tokens: int = DEFAULT_MAX_OUTPUT_TOKENS,
         temperature: float = 0.0,
     ) -> str:
+        prompt = self._fit_prompt(prompt)
         try:
             body = self._post(prompt, max_tokens=max_tokens, temperature=temperature)
             return self._parse(body)
@@ -140,6 +152,28 @@ class OpenAiCompatChat:
             message = f"LLM 未预期的失败（{type(exc).__name__}）：{exc}"
             self.last_error = message
             raise LlmUnavailable(message) from exc
+
+    def _fit_prompt(self, prompt: str) -> str:
+        """把过长的提示词截成不超过输入上限的最长 token 前缀。"""
+        self.last_prompt_tokens = None
+        self.last_sent_tokens = None
+        self.last_dropped_tokens = 0
+        self.last_truncated = False
+        if self._counter is None:
+            return prompt
+
+        token_ids = self._counter.encode_ids(prompt)
+        prompt_tokens = len(token_ids)
+        self.last_prompt_tokens = prompt_tokens
+        if prompt_tokens <= self._max_input_tokens:
+            self.last_sent_tokens = prompt_tokens
+            return prompt
+
+        fitted = self._counter.decode_ids(token_ids[: self._max_input_tokens])
+        self.last_sent_tokens = self._max_input_tokens
+        self.last_dropped_tokens = prompt_tokens - self._max_input_tokens
+        self.last_truncated = True
+        return fitted
 
     def _post(self, prompt: str, *, max_tokens: int, temperature: float) -> object:
         payload: dict[str, object] = {

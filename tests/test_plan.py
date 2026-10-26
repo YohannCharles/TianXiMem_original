@@ -20,6 +20,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Sequence
 from contextlib import contextmanager
 from typing import Any
 
@@ -159,6 +160,12 @@ class FakeCounter:
     def count(self, text: str) -> int:
         return len(text)
 
+    def encode_ids(self, text: str) -> list[int]:
+        return list(range(len(text)))
+
+    def decode_ids(self, ids: Sequence[int]) -> str:
+        return "x" * len(ids)
+
 
 # ── 夹具 ────────────────────────────────────────────────────────────────
 
@@ -214,7 +221,6 @@ def _agent(
         store=store or FakeStore(_PAIRS),
         retriever=retriever or FakeRetriever(default=_candidates("m1", "m2", "m3")),
         llm=llm,
-        counter=FakeCounter(),
         reranker=reranker,
         **kwargs,
     )
@@ -421,7 +427,7 @@ def test_at_most_four_steps_are_allowed_by_the_shipped_prompt() -> None:
 
 
 def test_the_shipped_decompose_prompt_declares_the_parser_contract_verbatim() -> None:
-    """    ⚠ 提示词里声明的输出契约必须与解析器认的**逐字对上**。
+    """⚠ 提示词里声明的输出契约必须与解析器认的**逐字对上**。
 
     提示词说"每个 step 恰好 id / query / depends_on"，而解析器收别的东西（或反之）
     ⇒ **每一份计划都被作废**，而**两边都不会报错**——只看到 `plan_invalid` 一堆。
@@ -630,10 +636,15 @@ def test_every_round_recalls_the_request_top_k_and_takes_the_top_n_after_rerank(
     )
     reranker = FakeReranker()
     store = FakeStore(
-        [FakePair(f"{p}{i}", f"q{i}", f"a{i}") for p in ("m", "n") for i in range(100)]
+        [
+            FakePair(f"{p}{i}", f"{p} question {i}", f"{p} answer {i}")
+            for p in ("m", "n")
+            for i in range(100)
+        ]
     )
+    llm = _two_round_llm()
     agent = _agent(
-        llm=_two_round_llm(),
+        llm=llm,
         retriever=retriever,
         reranker=reranker,
         store=store,
@@ -649,9 +660,22 @@ def test_every_round_recalls_the_request_top_k_and_takes_the_top_n_after_rerank(
         "Who was born in Lisbon?",
     ]
     assert [len(call["documents"]) for call in reranker.calls] == [100, 100]
-    # ③ 进候选池、发给模型的都只有精排后的**前 20 条**（`per_round_top_k`）
-    assert all(len(record.candidate_ids) == 20 for record in result.plan_history)
-    assert all(len(record.document_ids) == 20 for record in result.plan_history)
+    # ③ 每轮实际发送的恰好是精排后的前 20 条，顺序逐项一致且不跳过长文档
+    expected_ids = [
+        tuple(f"m{i}" for i in range(20)),
+        tuple(f"n{i}" for i in range(20)),
+    ]
+    assert [record.candidate_ids for record in result.plan_history] == expected_ids
+    assert [record.document_ids for record in result.plan_history] == expected_ids
+    assert [record.dropped_documents for record in result.plan_history] == [0, 0]
+    for prompt, prefix in zip(llm.calls[1:], ("m", "n"), strict=True):
+        positions = [
+            prompt.index(f"[{index}]\nQ: {prefix} question {index}\nA: {prefix} answer {index}")
+            for index in range(20)
+        ]
+        assert positions == sorted(positions)
+        for omitted in range(20, 100):
+            assert f"Q: {prefix} question {omitted}\n" not in prompt
     assert result.stats.candidate_count == 200  # 各轮**召回**相加（100 + 100）
     assert result.stats.unique_candidate_count == 40  # 各轮前 20 并起来
 
@@ -858,7 +882,6 @@ def test_every_stop_reason_used_in_the_code_is_declared() -> None:
         "llm_unavailable",
         "llm_error",
         "retrieval_error",
-        "prompt_budget_exceeded",
     }
 
 
@@ -1010,7 +1033,6 @@ def test_the_original_only_mode_leaves_the_rerank_query_empty() -> None:
     [
         ({"max_rounds": 0}, "max_rounds"),
         ({"per_round_top_k": 0}, "per_round_top_k"),
-        ({"max_prompt_tokens": 0}, "max_prompt_tokens"),
         ({"max_output_tokens": 0}, "plan_max_output_tokens"),
         ({"temperature": -0.1}, "temperature"),
         ({"max_plan_steps": 5}, "计划步数上限"),
@@ -1028,7 +1050,7 @@ def test_construction_refuses_impossible_limits(kwargs: dict, match: str) -> Non
 
 
 def test_the_built_in_fallback_still_selects_react() -> None:
-    """    ⭐ 配置不填 `mode` ⇒ **逐字**走 `react` 执行器。
+    """⭐ 配置不填 `mode` ⇒ **逐字**走 `react` 执行器。
 
     ⚠ **这是代码内置缺省，不是提交口径**：`agentic.mode` 缺席时（直接构造
     `AgenticConfig()`、或不含该键的 yaml）必须落到 `react`。
@@ -1036,8 +1058,10 @@ def test_the_built_in_fallback_still_selects_react() -> None:
     """
     from tianximem.common.config import AgenticConfig
 
-    assert AgenticConfig().mode == "react"
-    assert AgenticConfig().plan_max_output_tokens == 768
+    config = AgenticConfig()
+    assert config.mode == "react"
+    assert config.max_output_tokens == 512
+    assert config.plan_max_output_tokens == 1536
 
 
 def test_the_shipped_profile_selects_the_plan_executor() -> None:
@@ -1048,9 +1072,9 @@ def test_the_shipped_profile_selects_the_plan_executor() -> None:
     """
     from pathlib import Path
 
-    text = (
-        Path(__file__).resolve().parents[1] / "configs" / "default.yaml"
-    ).read_text(encoding="utf-8")
+    text = (Path(__file__).resolve().parents[1] / "configs" / "default.yaml").read_text(
+        encoding="utf-8"
+    )
     assert "  mode: plan" in text
 
 

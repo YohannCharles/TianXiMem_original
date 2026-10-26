@@ -210,7 +210,7 @@ def _validate_agentic(cfg: AppConfig) -> None:
             f"{cfg.agentic.sufficiency_threshold}\n"
             "  ⚠ 它只在**已经判定充分**之后起作用（见 `DEFAULT_COQ_SUFFICIENCY_THRESHOLD`）。"
         )
-    for name in ("max_prompt_tokens", "max_output_tokens", "plan_max_output_tokens"):
+    for name in ("max_output_tokens", "plan_max_output_tokens"):
         if getattr(cfg.agentic, name) <= 0:
             raise ConfigError(f"`agentic.{name}` 必须为正：{getattr(cfg.agentic, name)}")
     if cfg.agentic.timeout_seconds <= 0:

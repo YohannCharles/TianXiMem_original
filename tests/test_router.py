@@ -35,7 +35,7 @@ from tianximem.common.config import (
     StorageConfig,
     load_config,
 )
-from tianximem.common.tokens import O200kCounter
+from tianximem.common.tokens import LLM_MAX_INPUT_TOKENS, O200kCounter, load_counter
 from tianximem.embed.base import CachingEmbedder, OpenAICompatEmbedder
 from tianximem.embed.query_instruction import QueryInstructionEmbedder
 from tianximem.llm import LlmUnavailable, OpenAiCompatChat
@@ -202,6 +202,74 @@ def test_chat_sends_the_declared_model_temperature_and_max_tokens() -> None:
     assert seen["temperature"] == 0.0
     assert seen["max_tokens"] == 8
     assert seen["auth"] == "Bearer k"
+
+
+def test_chat_truncates_an_over_limit_prompt_to_the_exact_token_prefix() -> None:
+    seen: dict = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        import json
+
+        seen.update(json.loads(request.content))
+        return _reply("DEFAULT")
+
+    counter = O200kCounter()
+    prompt = "token-" * 30_000
+    chat = OpenAiCompatChat(
+        base_url="https://gw.example/v1",
+        api_key="k",
+        model="some-model",
+        client=httpx.Client(transport=httpx.MockTransport(handler)),
+        counter=counter,
+        max_input_tokens=100,
+    )
+    chat.complete(prompt)
+
+    sent = seen["messages"][0]["content"]
+    assert counter.count(sent) == 100
+    assert chat.last_prompt_tokens == counter.count(prompt)
+    assert chat.last_sent_tokens == 100
+    assert chat.last_dropped_tokens == counter.count(prompt) - 100
+    assert chat.last_truncated is True
+
+
+def test_chat_does_not_truncate_a_prompt_at_the_exact_limit() -> None:
+    seen: dict = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        import json
+
+        seen.update(json.loads(request.content))
+        return _reply("DEFAULT")
+
+    counter = O200kCounter()
+    prompt = "token-" * 100
+    limit = counter.count(prompt)
+    chat = OpenAiCompatChat(
+        base_url="https://gw.example/v1",
+        api_key="k",
+        model="some-model",
+        client=httpx.Client(transport=httpx.MockTransport(handler)),
+        counter=counter,
+        max_input_tokens=limit,
+    )
+    chat.complete(prompt)
+
+    assert seen["messages"][0]["content"] == prompt
+    assert chat.last_sent_tokens == limit
+    assert chat.last_dropped_tokens == 0
+    assert chat.last_truncated is False
+
+
+@pytest.mark.parametrize("limit", [0, -1])
+def test_chat_rejects_a_non_positive_input_limit(limit: int) -> None:
+    with pytest.raises(ValueError, match="输入 token 上限"):
+        OpenAiCompatChat(
+            base_url="https://gw.example/v1",
+            api_key="k",
+            model="some-model",
+            max_input_tokens=limit,
+        )
 
 
 @pytest.mark.parametrize(
@@ -721,11 +789,14 @@ def test_build_services_wires_the_router_into_the_pipeline(tmp_path) -> None:
 
 
 def test_services_close_releases_the_llm_and_embedding_clients(tmp_path) -> None:
-    services = build_services(_config(tmp_path))
+    config = _config(tmp_path)
+    services = build_services(config)
     router = services.search.router
     assert router is not None
     client = router.client
     assert isinstance(client, OpenAiCompatChat)
+    assert client._counter is load_counter(config.budget.tokenizer)  # noqa: SLF001
+    assert client._max_input_tokens == LLM_MAX_INPUT_TOKENS  # noqa: SLF001
     wrapping = services.embedder
     assert isinstance(wrapping, QueryInstructionEmbedder)
     caching = wrapping.inner

@@ -29,6 +29,7 @@ from typing import Final, Protocol
 __all__ = [
     "DEFAULT_TOKENIZER",
     "EMBED_MAX_TOKENS",
+    "LLM_MAX_INPUT_TOKENS",
     "MAX_INPUT_TOKENS",
     "O200kCounter",
     "TokenCounter",
@@ -43,6 +44,13 @@ DEFAULT_TOKENIZER: Final[str] = "o200k_base"
 #: 这是 AML 外部契约常量，不是调优参数；见 `docs/config-reference.md` 的
 #: `budget.max_tokens`。
 MAX_INPUT_TOKENS: Final[int] = 117_760
+
+#: 内部 LLM 提示词的发送上限。
+#:
+#: 端点总窗口为 128k，输入还要与调用方的输出预算、协议计数和 tokenizer
+#: 差异共享空间。110k 为这些差异留出约 18k 余量；超过时客户端只发送
+#: 不超此上限的最长 token 前缀，而不是发起一个已知会失败的请求。
+LLM_MAX_INPUT_TOKENS: Final[int] = 110_000
 
 #: **提交口径的嵌入窗口**：`text-embedding-v4` 单条文本最多 **8,192 token**
 #: （官方 FAQ 原文：`Each text can contain at most 8,192 tokens`）。
@@ -80,6 +88,14 @@ class TokenCounter(Protocol):
 
     def count(self, text: str) -> int:
         """`text` 有多少个 token。**空串是 0**。"""
+        ...
+
+    def encode_ids(self, text: str) -> list[int]:
+        """把文本编码为 token ID；供发送前按精确 token 边界取前缀。"""
+        ...
+
+    def decode_ids(self, ids: Sequence[int]) -> str:
+        """把 token ID 解码为文本。"""
         ...
 
 

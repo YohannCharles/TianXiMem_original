@@ -82,9 +82,8 @@ built-in defaults
 | `agentic.max_rounds` | `4` | C | Retrieval rounds, including the first. |
 | `agentic.per_round_top_k` | `20` | C | Candidates retained for the model after each round's rerank. |
 | `agentic.sufficiency_threshold` | `0.8` | C | React early-stop confidence threshold. |
-| `agentic.max_prompt_tokens` | `6000` | C | Per-round agent prompt budget. |
-| `agentic.max_output_tokens` | `256` | C | React output limit. |
-| `agentic.plan_max_output_tokens` | `768` | C | Plan output limit. |
+| `agentic.max_output_tokens` | `512` | C | React output limit. |
+| `agentic.plan_max_output_tokens` | `1536` | C | Plan output limit. |
 | `agentic.timeout_seconds` | `30.0` | C | LLM request timeout. |
 | `agentic.temperature` | `0.0` | C | LLM sampling temperature. |
 | `agentic.round_rerank_enabled` | `true` | C | Rerank candidates inside each multi-hop round. |

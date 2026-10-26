@@ -40,6 +40,7 @@ import argparse
 import shutil
 import sys
 import tempfile
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Final
 
@@ -195,6 +196,12 @@ class _CharCounter:
 
     def count(self, text: str) -> int:
         return len(text)
+
+    def encode_ids(self, text: str) -> list[int]:
+        return list(range(len(text)))
+
+    def decode_ids(self, ids: Sequence[int]) -> str:
+        return "x" * len(ids)
 
 
 def probe_pipeline(reranker: RemoteReranker, *, top_k: int, radius: int) -> bool:

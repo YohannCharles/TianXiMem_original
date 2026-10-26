@@ -61,7 +61,6 @@ from tianximem.agent.plan_prompts import (
     PLAN_STEP_SLOTS,
 )
 from tianximem.common.render import day_granularity, render_pair
-from tianximem.common.tokens import TokenCounter
 from tianximem.llm import LlmClient, LlmUnavailable
 from tianximem.rank import Reranker, RerankUnavailable
 from tianximem.retrieve.fusion import Candidate, HybridRetriever
@@ -104,7 +103,6 @@ PLAN_STOP_REASONS: Final[tuple[str, ...]] = (
     "llm_unavailable",
     "llm_error",
     "retrieval_error",
-    "prompt_budget_exceeded",
 )
 
 #: 计划的步数上限。⚠ **不是** `agentic.max_rounds`，见 `parse_plan` 的说明。
@@ -164,7 +162,7 @@ _STEP_FILLER: Final[re.Pattern[str]] = re.compile(
 
 @dataclass(frozen=True, slots=True)
 class PlanStepRecord:
-    """    一步的**完整过程**（实验模式下要能重建"模型在该步看到了什么"）。"""
+    """一步的**完整过程**（实验模式下要能重建"模型在该步看到了什么"）。"""
 
     index: int
     step_id: str
@@ -424,12 +422,10 @@ class PlanAgent:
         store: SqliteStore,
         retriever: HybridRetriever,
         llm: LlmClient,
-        counter: TokenCounter,
         reranker: Reranker | None = None,
         max_rounds: int = 4,
         per_round_top_k: int = 20,
-        max_prompt_tokens: int = 6000,
-        max_output_tokens: int = 768,
+        max_output_tokens: int = 1536,
         temperature: float = 0.0,
         round_rerank_enabled: bool = True,
         final_rerank_query_mode: str = "combined",
@@ -455,8 +451,6 @@ class PlanAgent:
             raise ValueError("agentic.max_rounds 必须 ≥ 1")
         if per_round_top_k < 1:
             raise ValueError("agentic.per_round_top_k 必须 ≥ 1")
-        if max_prompt_tokens <= 0:
-            raise ValueError("agentic.max_prompt_tokens 必须为正")
         if max_output_tokens <= 0:
             raise ValueError("agentic.plan_max_output_tokens 必须为正")
         if temperature < 0:
@@ -472,11 +466,9 @@ class PlanAgent:
         self._store = store
         self._retriever = retriever
         self._llm = llm
-        self._counter = counter
         self._reranker = reranker
         self._max_rounds = max_rounds
         self._per_round_top_k = per_round_top_k
-        self._max_prompt_tokens = max_prompt_tokens
         self._max_output_tokens = max_output_tokens
         self._temperature = temperature
         self._round_rerank = round_rerank_enabled
@@ -599,33 +591,7 @@ class PlanAgent:
             next_step = steps[index] if index < len(steps) else None
             history_text = render_completed_history(plan, state)
             plan_text = render_plan(plan)
-            documents, document_ids, dropped, budget_exceeded = self._build_documents(
-                state=state,
-                original=query,
-                plan_text=plan_text,
-                history=history_text,
-                step=step,
-                executed_query=executed_query,
-                top_ids=top_ids,
-            )
-            if budget_exceeded:
-                stop_reason = "prompt_budget_exceeded"
-                records.append(
-                    self._bare_record(
-                        index,
-                        step,
-                        executed_query,
-                        stop_reason,
-                        recalled=len(recalled),
-                        candidate_ids=top_ids,
-                        dropped=dropped,
-                        rerank_status=rerank_status,
-                        history_text=history_text,
-                        retrieval_latency_ms=retrieval_ms,
-                        rerank_latency_ms=rerank_ms,
-                    )
-                )
-                break
+            documents, document_ids, dropped = self._build_documents(state=state, top_ids=top_ids)
 
             # ── d. 一次 LLM：**回答本轮** ＋ 填下一查询 ─────────────────
             llm_started = monotonic()
@@ -955,58 +921,30 @@ class PlanAgent:
         self,
         *,
         state: _State,
-        original: str,
-        plan_text: str,
-        history: str,
-        step: PlanStep,
-        executed_query: str,
         top_ids: Sequence[str],
-    ) -> tuple[list[str], tuple[str, ...], int, bool]:
-        """本轮发给模型的文档列表 ＋ 索引映射 ＋ 丢弃数 ＋ 是否**因预算整体失败**。
+    ) -> tuple[list[str], tuple[str, ...], int]:
+        """按精排名次组装本轮全部 top-N 文档。
 
-        ⚠ 顺序是**本轮名次**，索引映射随后**一次性**建立、之后**不再改动文档顺序**
+        ⚠ 顺序就是本轮精排名次，索引映射随后一次性建立、之后不再改动文档顺序
         ——顺序一动，模型给的 `document_index` 就指向别的文档。
 
-        ⚠ 预算是"固定部分先占住、剩下的按名次补"：固定部分 = 原问题 ＋ 完整计划 ＋
-        已完成历史 ＋ 本轮子问题（**没有**“下一条模板”）。⛔ **历史不会因此丢掉**
-        ——它本来就只有问题/答案/来源 ID（见 `render_completed_history`）。
-
-        ⚠ 固定部分的那几段文字**必须与 `_answer_step` 真正发出去的那一份逐字相同**
-        （两边都走 `render_plan_step_prompt` ＋ 同一个 `step_line`）——否则预算算的是
-        另一份提示词，而"超了"这件事**不会报错**。
+        这里**没有输入 token 预算**：前 `per_round_top_k` 条中只要是可读取的真源
+        文档，就会完整进入本轮 prompt。唯一跳过的情况是真源缺行；它仍会计入
+        `dropped`，不会用后面的短文补位，也不会影响其余文档的索引顺序。
         """
-        base = render_plan_step_prompt(
-            original_question=original,
-            retrieval_plan=plan_text,
-            completed_history=history,
-            current_step=step_line(step),
-            executed_query=executed_query,
-            current_documents=(),
-        )
-        fixed_tokens = self._counter.count(base)
-        if fixed_tokens > self._max_prompt_tokens:
-            # 连固定部分都放不下 ⇒ **不组织一个残缺的输入**，安全停下。
-            return [], (), len(top_ids), True
-        budget = self._max_prompt_tokens - fixed_tokens
-
         documents: list[str] = []
         document_ids: list[str] = []
-        used = 0
         dropped = 0
         for memory_id in top_ids:
             body = state.bodies.get(memory_id)
             if body is None:
                 dropped += 1  # 真源缺行 ⇒ 它进不了文档，也就不能被引用
                 continue
-            rendered = _render_document(len(document_ids), body, state.days.get(memory_id, ""))
-            cost = self._counter.count(rendered)
-            if used + cost > budget:
-                dropped += 1
-                continue
-            used += cost
-            documents.append(rendered)
+            documents.append(
+                _render_document(len(document_ids), body, state.days.get(memory_id, ""))
+            )
             document_ids.append(memory_id)
-        return documents, tuple(document_ids), dropped, False
+        return documents, tuple(document_ids), dropped
 
     # ── 收口 ────────────────────────────────────────────────────────────
     def _finish(

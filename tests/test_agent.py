@@ -189,16 +189,12 @@ def _agent(
     retriever: FakeRetriever,
     store: FakeStore | None = None,
     reranker: FakeReranker | None = None,
-    counter=None,
     **kwargs,
 ) -> CoqAgent:
-    from tests.conftest import FakeCounter
-
     return CoqAgent(
         store=store or FakeStore(_FOUR),
         retriever=retriever,
         llm=llm,
-        counter=counter or FakeCounter(),
         reranker=reranker,
         **kwargs,
     )
@@ -554,6 +550,37 @@ def test_round_candidate_depth_follows_the_request_top_k() -> None:
     assert retriever.calls[0]["top_k"] == 37
 
 
+def test_the_reranked_top_twenty_are_sent_in_order_and_in_full() -> None:
+    """当前轮恰好完整发送精排后的前 20 条，不按 token 跳过任何一条。"""
+    ids = [f"m{i}" for i in range(30)]
+    long_answer = "start " + ("x" * 20_000) + " end marker"
+    pairs = [
+        FakePair(memory_id, f"question {index}", long_answer if index == 0 else f"answer {index}")
+        for index, memory_id in enumerate(ids)
+    ]
+    llm = FakeLlm(_reply(sufficient=True, indices=[0]))
+    agent = _agent(
+        llm=llm,
+        retriever=FakeRetriever(default=_candidates(*ids)),
+        store=FakeStore(pairs),
+        per_round_top_k=20,
+    )
+    result = agent.search(user_id="u", query="q", top_k=100)
+
+    expected = tuple(ids[:20])
+    assert result.stats.rounds[0].candidate_ids == expected
+    assert result.stats.rounds[0].document_ids == expected
+    prompt = llm.calls[0]
+    positions = [
+        prompt.index(f"[{index}]\nQ: question {index}\nA: {pairs[index].answer}")
+        for index in range(20)
+    ]
+    assert positions == sorted(positions)
+    assert "start " + ("x" * 20_000) + " end marker" in prompt
+    assert "Q: question 20\n" not in prompt
+    assert "Q: question 29\n" not in prompt
+
+
 def test_round_rerank_can_be_switched_off_for_the_ablation() -> None:
     """关掉它 ⇒ **一次精排都不发生**（每轮与最终）。"""
     reranker = FakeReranker()
@@ -754,14 +781,8 @@ def test_history_evidence_survives_a_round_where_it_ranks_last() -> None:
     assert result.stats.rounds[1].document_ids == ("m2", "m1")
 
 
-def test_the_document_budget_never_drops_history_evidence() -> None:
-    """⭐ 历史证据**先占预算**，然后才轮到本轮候选。
-
-    ⚠ 这里同时钉住一条**可证的不变式**：`history_tokens ≤ max_prompt_tokens` 恒成立
-    （历史只可能由**发出去过的**文档组成，而那些已经过预算）⇒ 所以
-    `_build_documents` 的"连历史都放不下"那条出口在当前配置下不可达。
-    本用例断言的是**它不会因为预算紧就把历史挤掉**这个正面的性质。
-    """
+def test_current_round_documents_and_history_evidence_are_both_sent_in_full() -> None:
+    """⭐ 输入不再按 token 裁剪：本轮候选和历史已选证据都完整发送。"""
     llm = FakeLlm(
         [
             _reply(indices=[0, 1], query="q2"),
@@ -769,16 +790,19 @@ def test_the_document_budget_never_drops_history_evidence() -> None:
         ]
     )
     retriever = FakeRetriever(by_query={"q": _candidates("m1", "m2"), "q2": _candidates("m3")})
-    # 预算足够放下两条历史证据（53 + 78 token），但**放不下第三条**
-    agent = _agent(llm=llm, retriever=retriever, max_prompt_tokens=140)
+    agent = _agent(llm=llm, retriever=retriever)
     result = agent.search(user_id="u", query="q", top_k=100)
 
     second = result.stats.rounds[1]
-    # 第一轮选中的 m1 / m2 都在第二轮里；本轮新候选 m3 被预算挤掉了
-    assert "Q: Where did I join?" in llm.calls[1]
-    assert "Q: Who directs the Atlas lab?" in llm.calls[1]
-    assert second.document_ids == ("m1", "m2")
-    assert second.dropped_documents == 1
+    assert second.document_ids == ("m3", "m1", "m2")
+    assert second.dropped_documents == 0
+    assert set(second.candidate_ids) <= set(second.document_ids)
+    for text in (
+        "Q: Where did I join?",
+        "Q: Who directs the Atlas lab?",
+        "Q: What did Professor Wang do before?",
+    ):
+        assert text in llm.calls[1]
 
 
 # ── ⑥ 最终候选与联合精排 Query ─────────────────────────────────────────
@@ -932,7 +956,6 @@ def test_construction_refuses_a_prompt_version_the_code_does_not_have() -> None:
         ({"max_rounds": 0}, "max_rounds"),
         ({"per_round_top_k": 0}, "per_round_top_k"),
         ({"sufficiency_threshold": 1.5}, "sufficiency_threshold"),
-        ({"max_prompt_tokens": 0}, "max_prompt_tokens"),
         ({"max_output_tokens": 0}, "max_output_tokens"),
         ({"temperature": -0.1}, "temperature"),
         ({"final_rerank_query_mode": "whatever"}, "final_rerank_query_mode"),

@@ -52,7 +52,8 @@ The executor does not:
 - Rebuild the document-to-stable-ID mapping every round.
 - Render each document once.
 - Preserve evidence from previous rounds by stable ID.
-- Keep historical evidence within the prompt budget before filling remaining space with current-round candidates.
+- Send the current round's reranked top-N documents in full; do not apply an input-token budget or backfill dropped slots.
+- React also sends all previously selected evidence, deduplicated by stable ID. Plan sends only question, answer, and source IDs from completed steps, not whole prior-round documents.
 
 ## Plan Recovery
 

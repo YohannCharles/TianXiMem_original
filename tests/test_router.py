@@ -36,6 +36,8 @@ from tianximem.common.config import (
     load_config,
 )
 from tianximem.common.tokens import O200kCounter
+from tianximem.embed.base import CachingEmbedder, OpenAICompatEmbedder
+from tianximem.embed.query_instruction import QueryInstructionEmbedder
 from tianximem.llm import LlmUnavailable, OpenAiCompatChat
 from tianximem.observability import SnapshotMetricsSink
 from tianximem.pairing import AddBatch, Message, apply_batch
@@ -333,7 +335,7 @@ def test_the_prompt_is_the_single_frozen_one() -> None:
     assert ROUTER_PROMPT_VERSION == "v5"
     assert ROUTER_PROMPT is not None and ROUTER_PROMPT.strip()
     # 两条判据都在（换了提示词就得同时改版本号，见 `QueryRouter.__init__`）
-    assert "The key test" not in ROUTER_PROMPT      # ← 该措辞不属于当前提示词
+    assert "The key test" not in ROUTER_PROMPT  # ← 该措辞不属于当前提示词
     assert 'Explicit dependency signals: "then", "after", "using that"' in ROUTER_PROMPT
     # ⛔ 当前是二分类：COUNT 判据不属于提示词
     assert "COUNT" not in ROUTER_PROMPT
@@ -712,20 +714,28 @@ def test_build_query_router_carries_the_thresholds_from_config(tmp_path) -> None
 
 
 def test_build_services_wires_the_router_into_the_pipeline(tmp_path) -> None:
-    """    **这一条挡的是"配了却没接上"**——它不报错，只让每一题都走默认路径。"""
+    """**这一条挡的是"配了却没接上"**——它不报错，只让每一题都走默认路径。"""
     assert build_services(_config(tmp_path)).search.router is not None
     disabled = replace(_config(tmp_path), router=RouterConfig(enabled=False))
     assert build_services(disabled).search.router is None
 
 
-def test_services_close_releases_the_llm_client(tmp_path) -> None:
+def test_services_close_releases_the_llm_and_embedding_clients(tmp_path) -> None:
     services = build_services(_config(tmp_path))
     router = services.search.router
     assert router is not None
     client = router.client
     assert isinstance(client, OpenAiCompatChat)
+    wrapping = services.embedder
+    assert isinstance(wrapping, QueryInstructionEmbedder)
+    caching = wrapping.inner
+    assert isinstance(caching, CachingEmbedder)
+    embedding = caching.inner
+    assert isinstance(embedding, OpenAICompatEmbedder)
+    embedding._http()  # noqa: SLF001 - create the pool whose lifecycle is under test
     services.close()
     assert client._client is None  # noqa: SLF001 — 断言连接池**真的**被释放了
+    assert embedding._client is None  # noqa: SLF001
 
 
 def test_agentic_is_not_built_when_disabled(tmp_path) -> None:

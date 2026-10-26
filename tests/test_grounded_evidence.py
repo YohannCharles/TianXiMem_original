@@ -10,6 +10,7 @@ from tianximem.facts.grammar import extract_evidence
 from tianximem.facts.query import FactPattern, compile_query
 from tianximem.pairing import AddBatch, Message, PayloadMismatchError, apply_batch
 from tianximem.retrieve import Candidate, EvidenceChecker
+from tianximem.service.grounded_planner import GroundedPlanner
 from tianximem.service.pipeline import SearchPipeline
 from tianximem.store.sqlite_store import SqliteStore
 
@@ -18,7 +19,7 @@ def batch(*texts, rid="opaque:request", user="u", timestamp=1756684800000):
     return AddBatch(rid, user, "s", tuple(Message("user", text, timestamp) for text in texts))
 
 
-def pipeline(store, *, limit=12, backfill=1024):
+def pipeline(store, *, limit=12, backfill=1024, planner=None):
     def search(*, user_id, query, top_k):
         with store.read() as conn:
             ids = [
@@ -42,6 +43,7 @@ def pipeline(store, *, limit=12, backfill=1024):
         fact_backfill_limit=backfill,
         radius=0,
         inject_abs_time=True,
+        grounded_planner=planner,
     )
 
 
@@ -330,7 +332,7 @@ def test_temporal_hypothetical_and_exclusion_queries_are_not_routed(query):
 
 
 def test_first_person_plan_still_matches_after_the_name_is_known(tmp_path):
-    """ 的读取期改名不能让**问 "I"** 的计划全部判否。
+    """的读取期改名不能让**问 "I"** 的计划全部判否。
 
     `fetch_evidence` 会把第一人称事实的主语换成真名，而计划侧仍是字面 `"i"`。
     没有 `owner` 等价规则时，同一个问题在"用户有自我介绍"之后静默回退原链。
@@ -369,6 +371,29 @@ def test_first_person_plan_still_matches_after_the_name_is_known(tmp_path):
     assert "contains 3 pencils" in renamed[0].content
     # 所有格必须保留：`My case` → `<name>'s case`（不是裸真名）。
     assert "Statement: Barbara Jones's orange case contains 3 pencils." in renamed[0].content
+
+
+def test_planner_exception_falls_back_to_hybrid_search(tmp_path):
+    """An optional planner failure must not turn Search into a 500."""
+
+    class BrokenLlm:
+        name = "broken-planner"
+
+        def complete(self, prompt, *, max_tokens=8, temperature=0.0):
+            raise ValueError("unexpected client failure")
+
+    store = SqliteStore.open(tmp_path / "test.db")
+    apply_batch(
+        store, batch("Rosa Quinn: I am a coach at North Athletics."), grounded_evidence=True
+    )
+    service = pipeline(store, planner=GroundedPlanner(BrokenLlm()))
+    hits = service.run(
+        user_id="u",
+        query="Tell me about the weather lately",
+        top_k=10,
+    ).items
+    assert len(hits) == 1
+    assert hits[0].content.endswith("Q: Rosa Quinn: I am a coach at North Athletics.")
 
 
 def test_first_person_plan_with_a_guard_literal_keeps_its_evidence(tmp_path):

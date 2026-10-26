@@ -36,7 +36,9 @@ source validation and fallback rules are described in
 - Python 3.12
 - `uv`
 - Docker with Compose for Qdrant and containerized deployment
-- OpenAI-compatible embedding and LLM endpoints; a reranker endpoint is optional
+- A required OpenAI-compatible embedding endpoint
+- An OpenAI-compatible chat endpoint when router, planner, or multi-hop execution is enabled
+- An optional reranker endpoint
 
 ## Start
 
@@ -72,7 +74,7 @@ curl -s -X POST http://127.0.0.1:8000/search \
   -d '{"user_id": "user-1", "query": "Where did the user move?", "top_k": 10}'
 ```
 
-See [`docs/api-usage.md`](docs/api-usage.md) for request examples and error handling.
+See [`docs/api-usage.md`](docs/api-usage.md) for request examples, `BASE_URL` setup, and error handling.
 
 ## Evaluate
 

@@ -45,6 +45,9 @@ ENV_LLM_MODEL: Final[str] = "AML_MODEL"
 #: `.env` 文件的位置（默认 cwd 下的 `.env`）。⚠ 它**不是**一个配置项，是"去哪读环境"。
 ENV_FILE: Final[str] = "TIANXIMEM_ENV_FILE"
 
+#: Compose 使用的 Qdrant 镜像（不是应用配置；由 compose.yaml 消费）。
+ENV_QDRANT_IMAGE: Final[str] = "TIANXIMEM_QDRANT_IMAGE"
+
 #: 指标快照的落点。**空 ⇒ 不写**（`NullMetricsSink`）——缺省不是错误。
 #:
 #: 指标供 HTTP-only harness 读取；响应形状固定且 harness 不导入服务内部模块，

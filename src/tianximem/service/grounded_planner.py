@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import dataclass
-from time import monotonic, sleep
+from time import monotonic
 
 from tianximem.common.config.constants import (
     DEFAULT_GROUNDED_PLANNER_MAX_OUTPUT_TOKENS,
@@ -17,7 +17,6 @@ from tianximem.facts.query import MULTISET_RELATIONS, FactPattern, QueryPlan, ti
 from tianximem.llm import LlmClient, LlmUnavailable
 
 GROUNDED_PLANNER_PROMPT_VERSION = DEFAULT_GROUNDED_PLANNER_PROMPT_VERSION
-_LLM_ATTEMPTS = 3
 #: 「逐次取证」的关系集合**只有一份**，住在 [`../facts/query.py`](../facts/query.py)。
 #: 本地别名只为保持调用点可读；⛔ 不要再抄一份字面表。
 _MULTISET_RELATIONS = MULTISET_RELATIONS
@@ -25,12 +24,34 @@ _RELATIONS = frozenset(
     relation_key(r)
     for r in (
         *RELATION_NAMES,
-        "employee", "student", "member", "volunteer", "teacher", "coach",
-        "team", "position", "chair", "head coach", "political party",
-        "department", "task", "meeting topic", "meeting frequency", "meeting type",
-        "attendee", "organizer", "participated in", "document title",
-        "role commencement", "orientation schedule", "home country",
-        "located in", "located at", "date of birth", "live", "lives in",
+        "employee",
+        "student",
+        "member",
+        "volunteer",
+        "teacher",
+        "coach",
+        "team",
+        "position",
+        "chair",
+        "head coach",
+        "political party",
+        "department",
+        "task",
+        "meeting topic",
+        "meeting frequency",
+        "meeting type",
+        "attendee",
+        "organizer",
+        "participated in",
+        "document title",
+        "role commencement",
+        "orientation schedule",
+        "home country",
+        "located in",
+        "located at",
+        "date of birth",
+        "live",
+        "lives in",
     )
 )
 
@@ -135,7 +156,9 @@ class GroundedPlanner:
 
     def __post_init__(self) -> None:
         if self.prompt_version != GROUNDED_PLANNER_PROMPT_VERSION:
-            raise ValueError(f"unsupported grounded planner prompt version: {self.prompt_version!r}")
+            raise ValueError(
+                f"unsupported grounded planner prompt version: {self.prompt_version!r}"
+            )
 
     def compile(self, query: str) -> QueryPlan | None:
         return self.decide(query).plan
@@ -148,21 +171,21 @@ class GroundedPlanner:
             "{relations}", ", ".join(sorted(_RELATIONS))
         ).replace("{query}", json.dumps(text, ensure_ascii=False))
         started = monotonic()
-        raw = ""
-        for attempt in range(_LLM_ATTEMPTS):
-            try:
-                raw = self.llm.complete(
-                    prompt, max_tokens=self.max_output_tokens, temperature=self.temperature
-                )
-                break
-            except LlmUnavailable:
-                # 网关会整段时间 5xx/超时；重试不改变计划语义，只影响延迟。
-                if attempt + 1 == _LLM_ATTEMPTS:
-                    return PlannerDecision(None, "llm_unavailable", 1, (monotonic() - started) * 1000)
-                sleep(1.0 * (attempt + 1))
+        try:
+            raw = self.llm.complete(
+                prompt, max_tokens=self.max_output_tokens, temperature=self.temperature
+            )
+        except LlmUnavailable:
+            return PlannerDecision(None, "llm_unavailable", 1, (monotonic() - started) * 1000)
+        except Exception:  # noqa: BLE001 - this path is an optional Search enhancement
+            return PlannerDecision(None, "planner_error", 1, (monotonic() - started) * 1000)
         latency = (monotonic() - started) * 1000
         plan, status = self._parse(raw, text)
-        if plan is not None and plan.date_bounds is None and _time_restriction_uncovered(text, plan):
+        if (
+            plan is not None
+            and plan.date_bounds is None
+            and _time_restriction_uncovered(text, plan)
+        ):
             # 题面里有**未被字面吸收**的时间措辞、计划却没有区间 ⇒ 限制被丢了，宁可弃权。
             # ⚠ 标题里的年份（"1967: The Last Good Year"）不算限制：它已经出现在计划字面里。
             plan, status = None, "missing_period"
@@ -187,7 +210,8 @@ class GroundedPlanner:
             return None, "invalid_output"
         allowed = (
             {"operator", "relations", "subject", "object", "period"}
-            if operator == "filter" else {"operator", "relations", "root"}
+            if operator == "filter"
+            else {"operator", "relations", "root"}
         )
         if set(payload) - allowed:
             return None, "unsupported_fields"
@@ -226,16 +250,25 @@ class GroundedPlanner:
                 if bounds is None:
                     return None, "invalid_period"
             return QueryPlan(
-                "filter", (FactPattern(ordered, subject=subject, object=obj),),
-                projection="source", guard_literal=obj or subject, query=query,
-                date_bounds=bounds, per_occurrence=ordered[0] in _MULTISET_RELATIONS,
+                "filter",
+                (FactPattern(ordered, subject=subject, object=obj),),
+                projection="source",
+                guard_literal=obj or subject,
+                query=query,
+                date_bounds=bounds,
+                per_occurrence=ordered[0] in _MULTISET_RELATIONS,
             ), "planned"
         root = _literal(payload.get("root"), query)
         if not root:
             return None, "invalid_literal"
         return QueryPlan(
-            "walk", (FactPattern(tuple(sorted(set(ordered)))),), projection="source",
-            query=query, require_complete_walk=True, walk_root=root, walk_relations=ordered,
+            "walk",
+            (FactPattern(tuple(sorted(set(ordered)))),),
+            projection="source",
+            query=query,
+            require_complete_walk=True,
+            walk_root=root,
+            walk_relations=ordered,
         ), "planned"
 
 
@@ -243,7 +276,11 @@ def _time_restriction_uncovered(text: str, plan: QueryPlan) -> bool:
     """题面里的时间词有没有落在计划字面之外（= 这条限制没被计划吸收）。"""
     literal_text = key(
         " ".join(
-            [*(p.subject for p in plan.patterns), *(p.object for p in plan.patterns), plan.walk_root]
+            [
+                *(p.subject for p in plan.patterns),
+                *(p.object for p in plan.patterns),
+                plan.walk_root,
+            ]
         )
     )
     for match in _TIME_WORDS.finditer(text):

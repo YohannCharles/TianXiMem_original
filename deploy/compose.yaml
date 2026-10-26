@@ -25,7 +25,8 @@ services:
     volumes:
       - tianxi_data:/data
     depends_on:
-      - qdrant
+      qdrant:
+        condition: service_healthy
     healthcheck:
       test: ["CMD", "python", "-c", "import sys,httpx; sys.exit(0 if httpx.get('http://127.0.0.1:8000/health', timeout=4).status_code == 200 else 1)"]
       interval: 30s
@@ -34,7 +35,7 @@ services:
       retries: 3
 
   qdrant:
-    image: qdrant/qdrant:v1.17.0
+    image: "${TIANXIMEM_QDRANT_IMAGE:-qdrant/qdrant:v1.17.0}"
     container_name: tianxi-qdrant
     restart: unless-stopped
     ports:
@@ -44,6 +45,19 @@ services:
       - qdrant_storage:/qdrant/storage
     environment:
       QDRANT__LOG_LEVEL: INFO
+    healthcheck:
+      test:
+        - CMD
+        - bash
+        - -c
+        - >-
+          exec 3<>/dev/tcp/127.0.0.1/6333 &&
+          printf 'GET /readyz HTTP/1.0\r\nHost: localhost\r\n\r\n' >&3 &&
+          grep -q '200 OK' <&3
+      interval: 10s
+      timeout: 5s
+      start_period: 10s
+      retries: 5
 
 volumes:
   qdrant_storage:

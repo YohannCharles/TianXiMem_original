@@ -147,10 +147,7 @@ class EvidenceChecker:
         would_say: bool | None = None
         if arm_rankings is not None:
             would_say = rank_consistency(arm_rankings[0], arm_rankings[1], self.thresholds)
-            if would_say:
-                reason = "名次一致性判据本来判定为充足"
-            else:
-                reason = "名次一致性判据本来判定为不足"
+            reason = "名次一致性判据本来判定为充足" if would_say else "名次一致性判据本来判定为不足"
         else:
             reason = "未跑两路分离查询"
         decision = CheckerDecision(enough=True, criterion_would_say=would_say, reason=reason)

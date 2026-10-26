@@ -15,14 +15,14 @@ Annotate only facts asserted directly by each source record. Negation, quoted sp
 }
 ```
 
-Use exact source spans. Matching applies case and whitespace normalization only.
+Use exact source spans. Matching applies case and whitespace normalization only. Local annotation files are intentionally ignored by Git; record their provenance with the evaluation run.
 
-Run the comparison:
+Run the comparison against your annotation file:
 
 ```bash
 uv run python tools/fact_entity_smoke.py \
   --model en_core_web_sm \
-  --gold eval/facts/common-facts-gold.jsonl \
+  --gold eval/facts/<gold-file>.jsonl \
   --json
 ```
 

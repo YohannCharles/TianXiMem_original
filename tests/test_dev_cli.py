@@ -21,12 +21,12 @@ def test_parser_exposes_platform_neutral_commands() -> None:
     assert parser.parse_args(["order-probe"]).processes == 1
 
 
-def test_config_check_uses_repository_profile(capsys) -> None:
+def test_config_check_loads_every_repository_profile(capsys) -> None:
     assert main(["config-check"]) == 0
     output = capsys.readouterr().out
-    assert "profile=default" in output
-    assert "router.enabled=True" in output
-    assert "agentic.mode=plan" in output
+    for profile in ("default", "local", "submit", "v1.0", "probe-nocapture", "probe-react"):
+        assert f"{profile}:" in output
+    assert "default: router=True agentic=True/plan grounded=True" in output
 
 
 def test_module_entrypoint_help() -> None:
@@ -157,7 +157,6 @@ _COMMAND_ARGV: list[list[str]] = [
     ["up"],
     ["down"],
     ["deploy-check"],
-    ["smoke"],
     ["clean"],
 ]
 
@@ -173,4 +172,4 @@ def test_every_command_reaches_a_child_process(argv, monkeypatch) -> None:
     monkeypatch.setattr("tianximem.dev._DEPLOY_ENV_FILE", Path(__file__))
 
     assert {command[0] for command in _COMMAND_ARGV} == set(_HANDLERS)
-    assert main(argv) == (1 if argv[0] == "smoke" else 0)
+    assert main(argv) == 0

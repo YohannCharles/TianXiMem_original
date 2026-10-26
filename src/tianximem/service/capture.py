@@ -358,6 +358,7 @@ class CaptureMiddleware:
             return
 
         chunks: list[bytes] = []
+        request_complete = False
         status: int | None = None
         error: str | None = None
         response_chunks: list[bytes] = []
@@ -368,11 +369,14 @@ class CaptureMiddleware:
             #   不是"读掉、缓存、再重放"。后者一旦写错（少转发一条、丢了 more_body、
             #   或没处理 http.disconnect）下游就会**拿到一个不同的 body**，
             #   而症状是"某些请求莫名 422/500"，与本模块毫无表面关联。
+            nonlocal request_complete
             message = await receive()
             if message.get("type") == "http.request":
                 chunk = message.get("body", b"")
                 if chunk:
                     chunks.append(chunk)
+                if not message.get("more_body", False):
+                    request_complete = True
             return message
 
         async def send_capture(message: Message) -> None:
@@ -396,18 +400,21 @@ class CaptureMiddleware:
             error = type(exc).__name__
             raise
         finally:
-            host = scope.get("client")
-            headers = {k.lower(): v for k, v in scope.get("headers", [])}
-            content_type = headers.get(b"content-type", b"").decode("latin-1") or None
-            self._capture.record(
-                method=str(scope.get("method", "")),
-                path=str(scope.get("path", "")),
-                body=b"".join(chunks),
-                status=status,
-                latency_ms=(time.perf_counter() - started) * 1000.0,
-                error=error,
-                client=(host[0] if host else None),
-                content_type=content_type,
-                has_authorization=b"authorization" in headers,
-                response_body=b"".join(response_chunks),
-            )
+            # A disconnected client can reach finally before any complete request
+            # body exists. Recording it would fabricate an empty API request.
+            if request_complete:
+                host = scope.get("client")
+                headers = {k.lower(): v for k, v in scope.get("headers", [])}
+                content_type = headers.get(b"content-type", b"").decode("latin-1") or None
+                self._capture.record(
+                    method=str(scope.get("method", "")),
+                    path=str(scope.get("path", "")),
+                    body=b"".join(chunks),
+                    status=status,
+                    latency_ms=(time.perf_counter() - started) * 1000.0,
+                    error=error,
+                    client=(host[0] if host else None),
+                    content_type=content_type,
+                    has_authorization=b"authorization" in headers,
+                    response_body=b"".join(response_chunks),
+                )

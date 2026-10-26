@@ -15,10 +15,10 @@ cloudflare.md               Public ingress configuration
 - The application runs as one process.
 - SQLite and the embedding cache use the persistent `tianxi_data` volume.
 - Qdrant uses the persistent `qdrant_storage` volume.
-- Qdrant is pinned and runs in server mode.
+- Qdrant is pinned and runs in server mode; its health check waits for `/readyz`.
 - The image contains no local model runtime.
 - The image preloads the `o200k_base` tokenizer.
-- `/health` checks only process liveness.
+- `/health` checks only process liveness; deployment readiness is `deploy-check`.
 
 ## Start
 
@@ -116,9 +116,7 @@ If only the endpoint behind an identical model and dimension changes, verify vec
 Back up SQLite first. It is the only non-rebuildable source.
 
 ```bash
-docker compose -f deploy/compose.yaml stop app
-docker compose -f deploy/compose.yaml exec app tar -c -C /data . > tianxi-backup.tar
-docker compose -f deploy/compose.yaml start app
+docker compose -f deploy/compose.yaml exec -T app tar -c -C /data . > tianxi-backup.tar
 ```
 
 The archive includes the embedding cache and request capture. They are optional during recovery. Qdrant can be rebuilt from SQLite.
@@ -131,7 +129,13 @@ Capture files may contain sensitive evaluation traffic. Do not commit, upload, o
 
 ## Two-Version Comparison
 
-`compose.two-versions.yaml` runs an additional application container against the same Qdrant server with separate SQLite storage and a separate collection.
+`compose.two-versions.yaml` is an overlay that adds a second application container against the same Qdrant server. Start it with both files:
+
+```bash
+docker compose -f deploy/compose.yaml -f deploy/compose.two-versions.yaml up -d
+```
+
+The overlay defaults to `TIANXIMEM_V10_PROFILE=v1.0`, mounts the repository `configs/` directory, and uses a separate SQLite volume and metrics path. Set a distinct collection in the selected profile.
 
 Requirements:
 
@@ -139,7 +143,7 @@ Requirements:
 - Use distinct collection names.
 - Use identical answer and judge settings.
 - Run versions sequentially unless the experiment explicitly validates concurrent load.
-- Give each service its own metric output path.
+- Keep `TIANXIMEM_V10_CONFIG_DIR` pointed at a complete config directory; it is a host path.
 
 ## Network and Security
 

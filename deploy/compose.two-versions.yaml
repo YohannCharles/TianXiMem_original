@@ -1,8 +1,9 @@
-# Optional second application container for version comparison.
+# Optional second application container. Use it as an overlay on compose.yaml:
+#   docker compose -f deploy/compose.yaml -f deploy/compose.two-versions.yaml up -d
 
 services:
   app-v10:
-    image: "${TIANXIMEM_V10_IMAGE:-tianximem:v1.0}"
+    image: "${TIANXIMEM_V10_IMAGE:-tianximem:local}"
     container_name: tianxi-app-v10
     restart: unless-stopped
     stop_grace_period: 60s
@@ -14,16 +15,19 @@ services:
       - .env
     environment:
       TIANXIMEM_QDRANT_URL: "${TIANXIMEM_QDRANT_URL:-http://qdrant:6333}"
-      TIANXIMEM_PROFILE: "${TIANXIMEM_V10_PROFILE:-v10}"
+      TIANXIMEM_PROFILE: "${TIANXIMEM_V10_PROFILE:-v1.0}"
       TIANXIMEM_SQLITE_PATH: /data/tianxi.db
       TIANXIMEM_EMBED_CACHE_DIR: /data/embed_cache
+      TIANXIMEM_CAPTURE_PATH: /data/capture/requests.jsonl
+      TIANXIMEM_METRICS_PATH: /data/metrics.json
       TIANXIMEM_WORKERS: "1"
-      TIANXIMEM_CONFIG_DIR: "${TIANXIMEM_V10_CONFIG_DIR:-/configs}"
+      TIANXIMEM_CONFIG_DIR: /configs
     volumes:
       - tianxi_data_v10:/data
-      - "${TIANXIMEM_V10_CONFIG_DIR:-./configs-v10}:/configs:ro"
+      - "${TIANXIMEM_V10_CONFIG_DIR:-../configs}:/configs:ro"
     depends_on:
-      - qdrant
+      qdrant:
+        condition: service_healthy
     healthcheck:
       test: ["CMD", "python", "-c", "import sys,httpx; sys.exit(0 if httpx.get('http://127.0.0.1:8000/health', timeout=4).status_code == 200 else 1)"]
       interval: 30s

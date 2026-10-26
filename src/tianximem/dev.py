@@ -110,7 +110,7 @@ def _dated_run_dir(prefix: str) -> str:
 
 
 def _config_check() -> int:
-    """Load the repository default profile with deterministic placeholder env."""
+    """Load every repository profile with deterministic placeholder env."""
 
     from tianximem.common.config import (
         ENV_EMBED_API_KEY,
@@ -118,6 +118,7 @@ def _config_check() -> int:
         ENV_LLM_API_KEY,
         ENV_LLM_BASE_URL,
         ENV_LLM_MODEL,
+        ENV_PROFILE,
         load_config,
     )
 
@@ -128,13 +129,20 @@ def _config_check() -> int:
         ENV_LLM_API_KEY: "config-check",
         ENV_LLM_MODEL: "config-check",
     }
-    config = load_config(env, config_dir=_REPO_ROOT / "configs")
-    print(f"profile={config.profile}")
-    print(f"router.enabled={config.router.enabled}")
-    print(f"agentic.enabled={config.agentic.enabled}")
-    print(f"agentic.mode={config.agentic.mode}")
-    print(f"retrieval.grounded_evidence={config.retrieval.grounded_evidence}")
-    print(f"packaging.annotate_relatives={config.packaging.annotate_relatives}")
+    profiles = sorted(path.stem for path in (_REPO_ROOT / "configs").glob("*.yaml"))
+    if not profiles:
+        raise SystemExit("configs/ 下没有任何 YAML profile")
+    for profile in profiles:
+        config = load_config(
+            {**env, ENV_PROFILE: profile},
+            config_dir=_REPO_ROOT / "configs",
+        )
+        print(
+            f"{profile}: router={config.router.enabled} "
+            f"agentic={config.agentic.enabled}/{config.agentic.mode} "
+            f"grounded={config.retrieval.grounded_evidence} "
+            f"collection={config.storage.qdrant.collection}"
+        )
     return 0
 
 
@@ -338,12 +346,6 @@ def _cmd_clean(args: argparse.Namespace, extra: list[str]) -> int:
     return _clean()
 
 
-def _cmd_smoke(args: argparse.Namespace, extra: list[str]) -> int:
-    # `@echo …; @false` 的替代：占位也要**明确失败**，别让它静默成功。
-    print("NOT_IMPLEMENTED: smoke discriminator is not available")
-    return 1
-
-
 # ── 子进程工厂：命令名 → 实现 ────────────────────────────────────────────────
 _HANDLERS: dict[str, Callable[[argparse.Namespace, list[str]], int]] = {
     "help": _cmd_help,
@@ -380,7 +382,6 @@ _HANDLERS: dict[str, Callable[[argparse.Namespace, list[str]], int]] = {
     "up": _cmd_up,
     "down": _cmd_down,
     "deploy-check": _cmd_deploy_check,
-    "smoke": _cmd_smoke,
     "clean": _cmd_clean,
 }
 
@@ -667,9 +668,7 @@ def _add_evaluation_commands(subparsers: argparse._SubParsersAction) -> None:
 ⚠ 冒烟用 `ARGS='--limit 3'`；截断运行会写入数据指纹警示，不能与全量比较。
 """,
     )
-    eval_command.add_argument(
-        "--dataset", default="locomo-refined", help="数据集名称"
-    )
+    eval_command.add_argument("--dataset", default="locomo-refined", help="数据集名称")
 
     baseline = _add_command(
         subparsers,
@@ -688,9 +687,7 @@ def _add_evaluation_commands(subparsers: argparse._SubParsersAction) -> None:
       make baseline DATASET=clbench ARGS='--run-id clb-after-rerank --switches {…}'
 """,
     )
-    baseline.add_argument(
-        "--dataset", default="locomo-refined", help="数据集名称"
-    )
+    baseline.add_argument("--dataset", default="locomo-refined", help="数据集名称")
 
     _add_command(
         subparsers,
@@ -799,16 +796,8 @@ def _add_docker_commands(subparsers: argparse._SubParsersAction) -> None:
 
 
 def _add_housekeeping_commands(subparsers: argparse._SubParsersAction) -> None:
-    """占位与清理。"""
+    """运行时清理。"""
 
-    _add_command(
-        subparsers,
-        "smoke",
-        "AML 端到端判别实验（尚未实现）",
-        notes="""\
-该命令目前是占位实现并明确返回失败，避免被误认为可用。
-""",
-    )
     _add_command(
         subparsers,
         "clean",

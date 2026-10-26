@@ -40,7 +40,6 @@ env（`.env`）拥有密钥 / 端点 / **路径** / 进程形态；`configs/<pro
 # 本文件是配置包的再导出面；除 `__all__` 外，现有导入点使用的名字也必须保持可导入。
 # ruff: noqa: F401
 
-
 from __future__ import annotations
 
 from tianximem.common.tokens import DEFAULT_TOKENIZER, MAX_INPUT_TOKENS
@@ -84,6 +83,7 @@ from .constants import (
     ENV_LLM_MODEL,
     ENV_METRICS_PATH,
     ENV_PROFILE,
+    ENV_QDRANT_IMAGE,
     ENV_QDRANT_URL,
     ENV_RERANKER_API_KEY,
     ENV_RERANKER_BASE_URL,
@@ -120,6 +120,7 @@ from .model import (
 from .validate import assert_single_process, validate
 
 __all__ = [
+    "ENV_CAPTURE_PATH",
     "ENV_CONFIG_DIR",
     "ENV_EMBED_API_KEY",
     "ENV_EMBED_BASE_URL",
@@ -130,6 +131,7 @@ __all__ = [
     "ENV_LLM_MODEL",
     "ENV_METRICS_PATH",
     "ENV_PROFILE",
+    "ENV_QDRANT_IMAGE",
     "ENV_QDRANT_URL",
     "ENV_RERANKER_API_KEY",
     "ENV_RERANKER_BASE_URL",

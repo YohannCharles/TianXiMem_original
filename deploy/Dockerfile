@@ -31,7 +31,9 @@ ENV PYTHONUNBUFFERED=1 \
     PATH="/app/.venv/bin:$PATH"
 
 RUN groupadd --gid 10001 app \
- && useradd --uid 10001 --gid 10001 --no-create-home --shell /usr/sbin/nologin app
+ && useradd --uid 10001 --gid 10001 --no-create-home --shell /usr/sbin/nologin app \
+ && mkdir -p /data/embed_cache /data/capture \
+ && chown -R app:app /data
 
 WORKDIR /app
 
@@ -40,8 +42,6 @@ COPY --from=builder --chown=root:root /opt/tiktoken-cache /opt/tiktoken-cache
 COPY --chown=root:root configs/ /app/configs/
 COPY --chown=root:root eval/__init__.py /app/eval/__init__.py
 COPY --chown=root:root eval/smoke/ /app/eval/smoke/
-
-RUN mkdir -p /data/embed_cache /data/capture && chown -R app:app /data
 
 ENV TIKTOKEN_CACHE_DIR=/opt/tiktoken-cache \
     TIANXIMEM_SQLITE_PATH=/data/tianxi.db \

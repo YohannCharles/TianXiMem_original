@@ -45,7 +45,7 @@ import json
 import sqlite3
 from dataclasses import dataclass, replace
 
-from tianximem.facts.evidence import EVIDENCE_VERSION, key
+from tianximem.facts.evidence import EVIDENCE_VERSION, EvidenceFact, key
 from tianximem.facts.grammar import (
     _NOT_A_NAME,
     _SELF_NAME,
@@ -154,22 +154,25 @@ def index_pair_facts(store: SqliteStore, conn: sqlite3.Connection, pair: QaPair)
     的顺序，而同一批里的自我介绍与档案字段是同一个人的同一次自述。
     """
     source_messages = store.fetch_pair_messages(conn, pair.id)
+    facts: tuple[EvidenceFact, ...]
     if source_messages:
-        facts = []
+        extracted_facts: list[EvidenceFact] = []
         extractor = _default_entity_extractor()
         for message in source_messages:
-            extracted = extract_evidence(
-                parent_memory_id=pair.id,
-                user_id=pair.user_id,
-                question=message.content if message.role == "user" else None,
-                answer=message.content if message.role != "user" else None,
-                event_time=message.timestamp,
-                entity_extractor=extractor,
-                position_prefix=f"message:{message.source_index}:",
+            extracted_facts.extend(
+                extract_evidence(
+                    parent_memory_id=pair.id,
+                    user_id=pair.user_id,
+                    question=message.content if message.role == "user" else None,
+                    answer=message.content if message.role != "user" else None,
+                    event_time=message.timestamp,
+                    entity_extractor=extractor,
+                    position_prefix=f"message:{message.source_index}:",
+                )
             )
-            facts.extend(extracted)
+        facts = tuple(extracted_facts)
     else:
-        # Databases created before boundary retention remain rebuildable.  New
+        # Databases created before boundary retention remain rebuildable. New
         # Adds always take the branch above.
         facts = extract_evidence(
             parent_memory_id=pair.id,
@@ -189,9 +192,7 @@ def index_pair_facts(store: SqliteStore, conn: sqlite3.Connection, pair: QaPair)
     store.mark_fact_index_coverage(conn, pair, version=EVIDENCE_VERSION)
 
 
-def _batch_owner_name(
-    store: SqliteStore, conn: sqlite3.Connection, pair: QaPair
-) -> str | None:
+def _batch_owner_name(store: SqliteStore, conn: sqlite3.Connection, pair: QaPair) -> str | None:
     """该 user 自我介绍写下的真名（没有就 `None`）。
 
     **先看这次 Add，再看该 user 已有的 `name` 事实**：HaluMem 一类
@@ -208,9 +209,7 @@ def _batch_owner_name(
     * 95.3% 的官方消息带时间戳，缺的那 4.7% 主要是 ScriptMem（跑不了）与 MQuAKE
       （无时间语义的静态三元组）⇒ 时间冲突不是这条绑定的主要风险。
     """
-    for sibling in store.fetch_by_request(
-        conn, pair.user_id, pair.session_id, pair.request_id
-    ):
+    for sibling in store.fetch_by_request(conn, pair.user_id, pair.session_id, pair.request_id):
         for side in (sibling.question, sibling.answer):
             if not side:
                 continue
@@ -291,9 +290,7 @@ def apply_batch(
                 pair.id,
                 tuple(
                     (source_index, message.role, message.content, message.timestamp)
-                    for source_index, message in zip(
-                        block.source_idxs, block.messages, strict=True
-                    )
+                    for source_index, message in zip(block.source_idxs, block.messages, strict=True)
                 ),
             )
             if grounded_evidence:

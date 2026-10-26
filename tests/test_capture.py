@@ -13,6 +13,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import threading
 from collections.abc import Iterator
@@ -21,6 +22,7 @@ from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
+from starlette.types import Message
 from tests.conftest import Wired, rd
 
 from tianximem.common.config import ConfigError, load_config
@@ -370,6 +372,27 @@ def test_health_is_not_recorded(capture: RequestCapture, wired: Wired) -> None:
 
     assert _requests(capture) == []
     assert "/health" not in CAPTURED_PATHS
+
+
+def test_incomplete_request_is_not_recorded(capture: RequestCapture) -> None:
+    """Client disconnect before body completion must not fabricate an empty request."""
+    messages: list[Message] = [{"type": "http.disconnect"}]
+    sent: list[Message] = []
+
+    async def receive() -> Message:
+        return messages.pop(0)
+
+    async def app(_scope, receive, _send) -> None:
+        await receive()
+
+    async def send(message: Message) -> None:
+        sent.append(message)
+
+    middleware = CaptureMiddleware(app, capture=capture)
+    asyncio.run(middleware({"type": "http", "method": "POST", "path": "/add"}, receive, send))
+
+    assert sent == []
+    assert _requests(capture) == []
 
 
 def test_capture_changes_neither_the_response_nor_the_truth_source(

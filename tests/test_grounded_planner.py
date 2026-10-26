@@ -3,18 +3,21 @@ from __future__ import annotations
 import json
 
 from tianximem.facts.query import QueryPlan
+from tianximem.llm import LlmUnavailable
 from tianximem.service.grounded_planner import GroundedPlanner
 
 
 class FakeLlm:
     name = "fake-qwen"
 
-    def __init__(self, reply: str) -> None:
+    def __init__(self, reply: str | BaseException) -> None:
         self.reply = reply
         self.calls: list[str] = []
 
     def complete(self, prompt: str, *, max_tokens: int = 8, temperature: float = 0.0) -> str:
         self.calls.append(prompt)
+        if isinstance(self.reply, BaseException):
+            raise self.reply
         return self.reply
 
 
@@ -38,9 +41,7 @@ def test_planner_accepts_a_safe_unseen_filter_surface() -> None:
 
 
 def test_planner_accepts_a_bounded_relationship_walk() -> None:
-    llm = FakeLlm(
-        '{"operator":"walk","root":"Book","relations":["author","place of birth"]}'
-    )
+    llm = FakeLlm('{"operator":"walk","root":"Book","relations":["author","place of birth"]}')
     plan = GroundedPlanner(llm).compile("Where was the author of Book born?")
     assert plan is not None
     assert plan.operator == "walk"
@@ -111,9 +112,25 @@ def test_planner_rejects_a_period_that_is_not_in_the_question_or_not_a_date() ->
 def test_planner_refuses_a_plan_that_drops_a_time_restriction() -> None:
     question = "Which meetings about roadmap review took place during Q1 of 2024?"
     llm = FakeLlm(
-        '{"operator":"filter","relations":["meeting topic"],"subject":"",'
-        '"object":"roadmap review"}'
+        '{"operator":"filter","relations":["meeting topic"],"subject":"","object":"roadmap review"}'
     )
     decision = GroundedPlanner(llm).decide(question)
     assert decision.plan is None and decision.status == "missing_period"
 
+
+def test_planner_degrades_after_exactly_one_unavailable_call() -> None:
+    llm = FakeLlm(LlmUnavailable("gateway down"))
+    decision = GroundedPlanner(llm).decide("Who works for Zenith Labs?")
+    assert decision.plan is None
+    assert decision.status == "llm_unavailable"
+    assert decision.llm_calls == 1
+    assert len(llm.calls) == 1
+
+
+def test_planner_turns_an_unexpected_error_into_a_named_fallback() -> None:
+    llm = FakeLlm(ValueError("bad client state"))
+    decision = GroundedPlanner(llm).decide("Who works for Zenith Labs?")
+    assert decision.plan is None
+    assert decision.status == "planner_error"
+    assert decision.llm_calls == 1
+    assert len(llm.calls) == 1

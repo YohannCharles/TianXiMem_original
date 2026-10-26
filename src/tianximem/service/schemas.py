@@ -1,13 +1,7 @@
 """`Add` / `Search` 的请求与响应模型。
 
 本层固定 HTTP 契约形状，并在边界校验参数，不依赖下游容错行为。
-
-## 两条刻意保留的宽松规则
-
-1. **`content` 不校验非空。** 边界拒绝空内容会让包含空消息的整批 Add 被重试后丢弃；
-   `pairing.Message` 会保留并处理该消息。
-2. **不使用 `extra="forbid"`。** 未知字段被忽略，避免 AML 增加字段时返回 422。
-   缺少必填字段仍由 pydantic 返回 422。
+未知字段会被忽略，以兼容 AML 后续增加字段；缺少必填字段仍返回 422。
 """
 
 from __future__ import annotations
@@ -35,8 +29,15 @@ class AddMessage(BaseModel):
     """
 
     role: str = Field(min_length=1)
-    content: str
+    content: str = Field(min_length=1)
     timestamp: int | None = None
+
+    @field_validator("content")
+    @classmethod
+    def _content_must_not_be_blank(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("content 不得为空白")
+        return value
 
 
 class AddRequest(BaseModel):

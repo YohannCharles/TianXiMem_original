@@ -50,8 +50,11 @@ QA 对"只能在 Smoke 上用真实的 20 条复现**。
 from __future__ import annotations
 
 from collections.abc import Sequence
+from typing import TypeVar
 
 __all__ = ["MAX_BATCH_WORDS", "MAX_MESSAGES_PER_BATCH", "batches", "request_id_for"]
+
+T = TypeVar("T")
 
 #: 本地可复现的切批口径。**常量**，理由见模块 docstring。
 MAX_MESSAGES_PER_BATCH = 20
@@ -81,7 +84,7 @@ def _content_words(item: object) -> int:
     return len((item.get("content") or "").split())
 
 
-def batches[T](
+def batches(  # noqa: UP047 - package supports Python 3.11
     messages: Sequence[T],
     *,
     max_messages: int = MAX_MESSAGES_PER_BATCH,

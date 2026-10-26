@@ -57,6 +57,12 @@ class Services:
 
     def close(self) -> None:
         self.qdrant.close()
+        wrapped = self.embedder
+        inner = wrapped.inner
+        if isinstance(inner, CachingEmbedder):
+            inner = inner.inner
+        if isinstance(inner, OpenAICompatEmbedder):
+            inner.close()
         reranker = self.search.reranker
         if isinstance(reranker, RemoteReranker):
             reranker.close()

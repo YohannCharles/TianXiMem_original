@@ -10,7 +10,7 @@ DATASET_FLAG = $(if $(filter all,$(DATASET)),--tier all,--dataset $(DATASET))
 
 .PHONY: help sync check config-check fmt lint typecheck test qdrant-up qdrant-down serve contract-check probe-reranker \
         router-eval coq-eval coq-decompose order-probe export-multihop image-build up down deploy-check \
-        eval baseline replay-official t1 t2 t2-dump smoke clean lock diagnose fetch-data data-check data-patch
+        eval baseline replay-official t1 t2 t2-dump clean lock diagnose fetch-data data-check data-patch
 
 help:
 	@uv run python -m tianximem.dev help
@@ -110,9 +110,6 @@ down:
 
 deploy-check:
 	uv run python -m tianximem.dev deploy-check $(ARGS)
-
-smoke:
-	uv run python -m tianximem.dev smoke
 
 clean:
 	uv run python -m tianximem.dev clean

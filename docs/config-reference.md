@@ -9,7 +9,7 @@ Configuration has two non-overlapping layers.
 | Environment variables | Credentials, endpoints, model IDs, paths, bind/port settings, worker count |
 | YAML profiles | Thresholds, weights, collection names, context budgets, and feature switches |
 
-`src/tianximem/common/config/` is the only package allowed to read either layer. Unknown keys are errors. A key belongs in configuration only when code consumes it.
+`src/tianximem/common/config/` is the only package allowed to read either layer. Unknown YAML keys are errors. A key belongs in configuration only when code consumes it.
 
 ## Loading
 
@@ -17,7 +17,8 @@ Configuration has two non-overlapping layers.
 built-in defaults
   -> configs/default.yaml
   -> configs/<profile>.yaml
-  -> environment variables
+  -> .env for values not already set
+  -> real environment variables
   -> validation
 ```
 
@@ -130,7 +131,7 @@ The embedding model ID is `models.embedder` in YAML. The reranker and chat model
 | --- | --- |
 | `TIANXIMEM_SQLITE_PATH` | SQLite source-of-truth file. |
 | `TIANXIMEM_QDRANT_URL` | Qdrant server URL. |
-| `TIANXIMEM_QDRANT_IMAGE` | Pinned Qdrant container image. |
+| `TIANXIMEM_QDRANT_IMAGE` | Optional Compose override for the pinned Qdrant image. |
 | `TIANXIMEM_EMBED_CACHE_DIR` | Persistent embedding cache directory. |
 | `TIANXIMEM_METRICS_PATH` | Optional metric snapshot path. |
 | `TIANXIMEM_CAPTURE_PATH` | Raw request capture path. |

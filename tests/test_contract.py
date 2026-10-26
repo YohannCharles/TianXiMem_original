@@ -302,6 +302,18 @@ def test_search_schema_rejects_illegal_requests(body: dict) -> None:
             "session_id": "s",
             "messages": [{"role": "", "content": "x"}],
         },
+        {
+            "request_id": "r",
+            "user_id": "u",
+            "session_id": "s",
+            "messages": [{"role": "user", "content": ""}],
+        },
+        {
+            "request_id": "r",
+            "user_id": "u",
+            "session_id": "s",
+            "messages": [{"role": "user", "content": "   "}],
+        },
         {"request_id": "r", "user_id": "u", "session_id": "s"},
     ],
 )
@@ -369,14 +381,27 @@ def test_http_add_round_trip_echoes_fields(wired: Wired) -> None:
 
 
 def test_http_rejects_illegal_request_at_the_boundary(wired: Wired) -> None:
-    """边界校验在**真的 HTTP 上**是 422。"""
+    """边界校验在**真的 HTTP 上**是 422，且 Add 不会留下部分写入。"""
     from fastapi.testclient import TestClient
+    from tests.conftest import rd
 
     from tianximem.service import create_app
 
     with TestClient(create_app(wired.services)) as client:
-        resp = client.post("/search", json={"user_id": "u1", "query": "q", "top_k": 0})
-    assert resp.status_code == 422
+        search = client.post("/search", json={"user_id": "u1", "query": "q", "top_k": 0})
+        add = client.post(
+            "/add",
+            json={
+                "request_id": "blank-content",
+                "user_id": "u1",
+                "session_id": "s1",
+                "messages": [{"role": "user", "content": "   "}],
+            },
+        )
+    assert search.status_code == 422
+    assert add.status_code == 422
+    assert rd(wired.store, wired.store.iter_pairs) == []
+    assert rd(wired.store, wired.store.is_batch_applied, "blank-content") is False
 
 
 def test_blank_query_is_rejected_with_422_and_that_is_deliberate(wired: Wired) -> None:
@@ -406,7 +431,7 @@ def test_blank_query_is_rejected_with_422_and_that_is_deliberate(wired: Wired) -
 
 
 def test_http_health_is_an_unauthenticated_2xx(wired: Wired) -> None:
-    """    平台探的是**与 Add 同源的 `/health`**，无需鉴权，任意 2xx 即正常。
+    """平台探的是**与 Add 同源的 `/health`**，无需鉴权，任意 2xx 即正常。
 
     这一条的失败模式不是掉分，是**没进场**——所以它必须有测试钉住。
     """

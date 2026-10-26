@@ -1,11 +1,11 @@
-"""通过公网验证 Add/Search 契约，仅需 httpx 与目标 URL。
+"""通过 HTTP 验证 Add/Search 契约，仅需 httpx 与目标 URL。
 
     python eval/smoke/public_api.py
-    python eval/smoke/public_api.py --base-url http://127.0.0.1:28088
+    python eval/smoke/public_api.py --base-url https://example.invalid
     python -m eval.smoke.public_api --report eval/reports/runs/public-api/latest.json
 
 复用 preflight 的契约检查，每次生成独立的 test-public-* 用户。
-测试数据会持久保留在目标服务中；不会调用 AML 评测任务接口。
+默认目标是本地服务；测试数据会持久保留，因此远程目标必须是允许写入的隔离实例。
 """
 
 from __future__ import annotations
@@ -33,7 +33,7 @@ from eval.smoke.preflight import (  # noqa: E402
     Report,
 )
 
-DEFAULT_BASE_URL = "https://tianximem.mbgtest.lenovomm.com"
+DEFAULT_BASE_URL = "http://127.0.0.1:8000"
 
 
 def run_checks(client: httpx.Client, *, nonce: str) -> tuple[Report, int]:

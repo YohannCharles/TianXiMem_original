@@ -44,7 +44,6 @@ python -m tianximem.dev image-build
 python -m tianximem.dev up
 python -m tianximem.dev down
 python -m tianximem.dev deploy-check
-python -m tianximem.dev smoke
 python -m tianximem.dev clean
 ```
 
@@ -61,4 +60,10 @@ Data preparation accepts repeatable `--dataset`, `--tier all`, `--offline`, and 
 
 Processes use argument lists rather than shell strings, so paths containing spaces and Windows paths are preserved.
 
-Docker commands require Docker Desktop or Docker Engine. If the current WSL environment cannot access the Docker socket, run the same command from the Windows side.
+The second-version comparison stack is an overlay. Always include the base file:
+
+```bash
+docker compose -f deploy/compose.yaml -f deploy/compose.two-versions.yaml up -d
+```
+
+Docker commands require Docker Desktop or Docker Engine. If WSL cannot access the Docker socket, run the same command from Windows.

@@ -104,7 +104,7 @@ The router only classifies. It does not retrieve, bind fact fields, generate ans
 
 `react` repeatedly retrieves, reranks a round-local candidate set, asks the model for sufficiency and the next query, and merges evidence by stable ID.
 
-`plan` first decomposes the original query into one to four ordered steps. Each round answers only the step whose evidence was just retrieved. Program code binds placeholders and decides when to stop. Program code adds one recovery retrieval for `unresolved` or `conflict` outcomes and reranks that recovery pool against the original query.
+`plan` first decomposes the original query into one to four ordered steps. Each round answers only the step whose evidence was just retrieved. Program code binds placeholders and decides when to stop. One recovery retrieval uses the original query after unresolved evidence, binding conflicts, invalid step output, an unavailable LLM, or an invalid decomposition plan. Recovery tops up the candidate pool to the requested `top_k`; it adds neither a plan step nor an LLM call. Retrieval errors do not trigger it.
 
 Both modes share normal retrieval, isolation, and final packaging. Final reranking occurs once in the Search pipeline after candidates from all rounds are merged.
 

@@ -57,15 +57,20 @@ The executor does not:
 
 ## Plan Recovery
 
-When a plan step finishes as `unresolved` or `conflict`, the executor performs one recovery retrieval using the original query:
+The executor performs one recovery retrieval using the original query after
+`dependency_unresolved`, `binding_conflict`, `invalid_output`,
+`llm_unavailable`, or `plan_invalid`:
 
 1. Retrieve and rerank up to the requested `top_k` candidates.
 2. Merge them after the plan-step candidates by stable ID.
 3. Stop when the pool reaches `top_k`; do not invent candidates to fill it.
 4. Use the original query for final reranking.
 5. Do not present the execution record as memory or as a final answer.
+6. Do not add a plan step or an LLM call for recovery.
 
-Tool failures such as invalid plans, LLM errors, and retrieval errors do not trigger this recovery path. They remain named failure reasons.
+`retrieval_error`, `llm_error`, `unbound_placeholder`, `max_rounds`, and
+`plan_complete` do not trigger this recovery path. A failed recovery retrieval
+preserves existing candidates; the reason remains a named diagnostic.
 
 ## Failure Behavior
 

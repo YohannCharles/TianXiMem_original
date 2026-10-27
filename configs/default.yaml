@@ -120,6 +120,6 @@ agentic:
 
 capture:
   # C: record raw Add/Search requests for protocol diagnostics.
-  enabled: false
+  enabled: true
   # C: rotate to a new file after this many bytes.
   max_bytes: 52428800

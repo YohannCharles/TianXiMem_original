@@ -19,7 +19,7 @@ and fallback rules are documented in [`../architecture.md`](../architecture.md).
 | `router.enabled` | `true` |
 | `agentic.enabled` | `true` |
 | `agentic.mode` | `plan` |
-| `capture.enabled` | `false` |
+| `capture.enabled` | `true` |
 
 Profiles override only keys that intentionally differ from the product profile:
 

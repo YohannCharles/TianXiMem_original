@@ -13,8 +13,9 @@
    ├─→ ③ 每一轮：程序绑定占位 ⇒ 混合召回 top_k → 精排 → 取前 per_round_top_k
    │              ⇒ 一次 LLM **只回答本轮** ⇒ 程序校验（索引 / 引句逐字）
    ├─→ ④ 停？（计划跑完 / 依赖未解 / 绑定冲突 / 输出非法 / 轮数用尽 / 失败）
-   └─→ ⑤ ⭐ **恢复分支**（`unresolved` **或** `conflict`；程序侧、一次性）：
-          按请求的 `top_k` 补一次**原题**检索并精排，按名次去重补位（不够不凑）
+   └─→ ⑤ ⭐ **恢复分支**（证据不足／冲突／输出非法／LLM 不可用／计划非法；
+          程序侧、一次性）：按请求的 `top_k` 补一次**原题**检索并精排，
+          按名次去重补位（不够不凑）
 ```
 
 ## 七条边界（越界都**不会报错**）
@@ -118,35 +119,39 @@ PLAN_MAX_STEPS: Final[int] = 4
 #: 且与 `per_round_top_k` **不再耦合**（改那个数不再牵动兜底）。
 #: 见 `_recover` 与 [`docs/config-reference.md`](../../../docs/config-reference.md)。
 
-#: 恢复分支的四种状态。⚠ **"触发但池子已经够了"与"真的跑了兜底"靠它分开**——
+#: 恢复分支的状态。⚠ **"触发但池子已经够了"、"检索失败"与"检索成功"靠它分开**——
 #: 只看 `entered` 会把"没检索"读成"兜底过"。
 PLAN_RECOVERY_STATUSES: Final[tuple[str, ...]] = (
     "not_triggered",
     "success",
+    "empty",
     "error",
     "skipped_pool_full",
 )
 
 #: ⭐ **哪些停止原因会触发恢复分支**。
 #:
-#: 判据是**"模型明确报告了它没走通"**，⛔ 不是"哪一步失败了"：
-#:
-#: | 停止原因 | 谁报告的 | 触发？ |
+#: | 停止原因 | 含义 | 触发？ |
 #: | --- | --- | --- |
-#: | `dependency_unresolved` | **模型**：这一步解不出来 | ✅ |
-#: | `binding_conflict` | **模型**：证据互相冲突 | ✅ |
-#: | `plan_invalid` / `llm_unavailable` / `llm_error` / `retrieval_error` | **程序或端点**：工具坏了 | ⛔ 不触发 |
-#: | `unbound_placeholder` / `invalid_output` / `max_rounds` / `plan_complete` | 程序（绑定 / 校验 / 预算 / 跑完） | ⛔ 不触发 |
+#: | `dependency_unresolved` | 模型：这一步证据不足 | ✅ |
+#: | `binding_conflict` | 模型：证据互相冲突 | ✅ |
+#: | `invalid_output` | 模型输出未通过严格校验 | ✅ |
+#: | `llm_unavailable` | LLM 调用不可用 | ✅ |
+#: | `plan_invalid` | 拆解结果不可执行 | ✅ |
+#: | `llm_error` / `retrieval_error` | 其他工具失败 | ⛔ |
+#: | `unbound_placeholder` / `max_rounds` / `plan_complete` | 绑定、预算或正常完成 | ⛔ |
 #:
-#: **为什么把 `conflict` 也收进来**：它与 `unresolved` 是**同一类事**——模型读到手上的证据后
-#: **明确说了"我走不通"**。那时候选池里往往只有前几轮攒下的一小撮，直接收口等于
-#: **把"模型已经发现有问题"当成"没事"**。补一次原题检索正对应"退回到老实按原题捞一遍"。
-#:
-#: ⛔ **工具性失败仍不触发**：`plan_invalid` / `llm_*` / `retrieval_error` 是**我们这边坏了**，
-#: 它们的处置是"保留已有候选、把原因原样交出去"（`fallback_reason` 只在一条都没攒到时才落）。
-#: 把它们也拉进来会让"哪一种失败走了哪条路"再也数不清——**那条理由没变。**
+#: 恢复分支**只补候选池**：按原题检索一次并按请求的 `top_k` 补位，不增加
+#: Plan 步骤，不增加 LLM 调用。`retrieval_error` 不触发，因为恢复检索同样依赖
+#: 检索器，重试只会把一次明确失败伪装成两次。
 PLAN_RECOVERY_TRIGGERS: Final[frozenset[str]] = frozenset(
-    {"dependency_unresolved", "binding_conflict"}
+    {
+        "dependency_unresolved",
+        "binding_conflict",
+        "invalid_output",
+        "llm_unavailable",
+        "plan_invalid",
+    }
 )
 
 #: 最终精排 Query 的两种构造方式。**与 React 同名同义**（取值域定义在 `common/config/constants.py`）。
@@ -211,9 +216,11 @@ class PlanRecovery:
     | `not_triggered` | `False` | 否 | 计划正常跑完 / 停在**工具性失败**或程序性停止上 |
     | `skipped_pool_full` | `True` | **否**（池子已 ≥ 目标） | 请求的 `top_k` 比已有池子还小时 |
     | `success` | `True` | 是 | 兜底检索返回了候选 |
+    | `empty` | `True` | 是 | 兜底检索成功但没有候选 |
     | `error` | `True` | 是（失败了） | 兜底检索抛异常 ⇒ **已有候选一条不动**，继续最终精排与答题 |
 
-    ⚠ 是否进入由 `PLAN_RECOVERY_TRIGGERS` 决定（`unresolved` **或** `conflict`）。
+    ⚠ 是否进入由 `PLAN_RECOVERY_TRIGGERS` 决定（证据不足、冲突、输出非法、
+    LLM 不可用或计划非法）。
 
     ⛔ 它**不是** `fallback_reason`：那个词在本仓的含义是"整条路降级回混合检索、
     执行器的候选全丢"。这里**恰好相反**——候选一条都不丢，只是**补一批**。
@@ -508,22 +515,28 @@ class PlanAgent:
         # ── ① 拆解（一次 LLM，**在检索之前**）────────────────────────────
         plan, failure = self._decompose(query)
         if plan is None:
-            # 一步都没跑 ⇒ **回退原混合链**：这是回退这个动作
-            # 唯一的触发条件——手上一条候选都没有，丢掉的东西为零。
+            # 允许恢复的拆解失败先做一次原题检索。若恢复也没有候选，才回退
+            # 整条混合链；两条路径都只是检索，不增加 Plan 步骤或 LLM 调用。
             reason = failure or "plan_invalid"
+            recovery = self._recover(
+                state=state,
+                user_id=user_id,
+                original=query,
+                stop_reason=reason,
+                top_k=top_k,
+            )
+            rerank_calls = 1 if recovery.reranked == "called" else 0
             return self._finish(
                 state=state,
                 records=records,
                 stop_reason=reason,
-                fallback_reason=reason,
-                rerank_calls=0,
+                fallback_reason=None if recovery.entered and state.ordered_ids else reason,
+                rerank_calls=rerank_calls,
                 decompose_llm_calls=1,
                 step_llm_calls=0,
                 plan=None,
                 original=query,
-                # ⚠ 拆解就失败 ⇒ **不在 `PLAN_RECOVERY_TRIGGERS` 里** ⇒ 恢复分支
-                #   **不触发**（`not_triggered`）。工具性失败一律保持原行为。
-                recovery=PlanRecovery(),
+                recovery=recovery,
                 started=started,
             )
 
@@ -677,7 +690,7 @@ class PlanAgent:
             if stop_reason is not None:
                 break
 
-        # ── ⑤ 恢复分支（`unresolved` **或** `conflict`；**程序侧、一次性**）────────
+        # ── ⑤ 恢复分支（可按启用原因触发；**程序侧、一次性**）───────────────────
         # ⚠ 它**不是**一条新的多跳路，是**对候选池的一次补充**：不计步骤、不加 LLM 调用、
         #   不截 Top-20，按请求的 `top_k` 补到池子满为止（**不够不凑**）。
         # ⚠ 它**自己精排一次**（挑选"哪几条有资格进池"）——那**不算**"第二次最终精排"：
@@ -712,7 +725,7 @@ class PlanAgent:
             started=started,
         )
 
-    # ── 恢复分支（`unresolved` / `conflict`）─────────────────────────────
+    # ── 恢复分支（由停止原因决定）─────────────────────────────────────────
     def _recover(
         self, *, state: _State, user_id: str, original: str, stop_reason: str, top_k: int
     ) -> PlanRecovery:
@@ -734,10 +747,8 @@ class PlanAgent:
         两个维度。
 
         ⚠ **触发面**：只看 `stop_reason in PLAN_RECOVERY_TRIGGERS`
-        ——即 `dependency_unresolved` **或** `binding_conflict`，
-        **模型明确说"走不通"的那两种**。⛔ 工具性失败（`plan_invalid` / `llm_*` /
-        `retrieval_error`）与程序性停止（`unbound_placeholder` / `invalid_output` /
-        `max_rounds`）**一律保持原行为**。
+        ——证据不足、绑定冲突、输出非法、LLM 不可用或计划非法。恢复检索本身
+        失败时仍保留已有候选；`retrieval_error` 不触发，避免再次调用已失败的检索器。
         """
         if stop_reason not in PLAN_RECOVERY_TRIGGERS:
             return PlanRecovery()
@@ -783,7 +794,7 @@ class PlanAgent:
             state.ordered_ids.setdefault(candidate.memory_id, None)
         return PlanRecovery(
             entered=True,
-            status="success",
+            status="success" if extra else "empty",
             executed_rounds=executed_rounds,
             target_top_k=target,
             pool_before=pool_before,

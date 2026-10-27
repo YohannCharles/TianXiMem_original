@@ -91,7 +91,7 @@ built-in defaults
 | `agentic.prompt_version` | `coq-original` | B | React prompt version assertion. |
 | `agentic.plan_decompose_prompt_version` | `plan-decompose-v2` | B | Plan decomposition prompt version assertion. |
 | `agentic.plan_step_prompt_version` | `plan-step-v2` | B | Plan step prompt version assertion. |
-| `capture.enabled` | `false` | C | Record raw Add/Search requests. |
+| `capture.enabled` | `true` | C | Record raw Add/Search requests. |
 | `capture.max_bytes` | `52428800` | C | Request capture file rotation size. |
 
 ## Environment Variables

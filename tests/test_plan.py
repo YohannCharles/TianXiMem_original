@@ -913,37 +913,71 @@ def test_a_plan_longer_than_the_round_budget_stops_at_max_rounds() -> None:
 # ── ⑩ 降级——绝不让一次正常 Search 变成 500 ─────────────────────────────
 
 
-@pytest.mark.parametrize("reply", [LlmUnavailable("端点挂了"), RuntimeError("意料之外")])
-def test_a_broken_decompose_falls_back_to_hybrid_retrieval(reply: BaseException) -> None:
-    """拆解就失败 ⇒ 一条候选都没有 ⇒ **回退原混合链**。
+def test_a_broken_decompose_recovers_once() -> None:
+    """拆解 LLM 不可用先原题恢复；恢复有候选时不再回退整条混合链。"""
+    llm = FakeLlm([LlmUnavailable("端点挂了")])
+    retriever = _big_retriever()
+    result = _agent(llm=llm, retriever=retriever).search(user_id="u", query="orig?", top_k=100)
+    assert result.stats.stop_reason == "llm_unavailable"
+    assert result.fallback_reason is None
+    assert len(retriever.calls) == 1 and retriever.calls[0]["query"] == "orig?"
+    assert result.recovery.entered is True
+    assert result.recovery.status == "success"
+    assert len(result.candidates) == 100
+    assert result.stats.llm_calls == 1
+    assert result.stats.steps_executed == 0
 
-    ⚠ 回退原因是**具名的**（不是笼统的"多跳没帮助"）：端点挂与输出非法要分得开。
-    """
-    llm = FakeLlm([reply])
-    agent = _agent(llm=llm)
-    result = agent.search(user_id="u", query="orig?", top_k=100)
-    expected = "llm_unavailable" if isinstance(reply, LlmUnavailable) else "llm_error"
-    assert result.stats.stop_reason == expected
-    assert result.fallback_reason == expected
+
+def test_an_unexpected_decompose_error_does_not_recover() -> None:
+    """`llm_error` 不在本次恢复触发范围内，保持原有整条回退行为。"""
+    result = _agent(llm=FakeLlm([RuntimeError("意料之外")]), retriever=_big_retriever()).search(
+        user_id="u", query="orig?", top_k=100
+    )
+    assert result.stats.stop_reason == "llm_error"
+    assert result.fallback_reason == "llm_error"
+    assert result.recovery.status == "not_triggered"
     assert result.candidates == ()
 
 
-def test_an_invalid_plan_falls_back_instead_of_inventing_one() -> None:
-    llm = FakeLlm([_plan_reply([{"id": "s1", "query": "a", "depends_on": ["s9"]}])])
-    agent = _agent(llm=llm)
-    result = agent.search(user_id="u", query="orig?", top_k=100)
+@pytest.mark.parametrize(
+    ("replies", "expected", "expected_calls"),
+    [
+        ([LlmUnavailable("端点挂了")], "llm_unavailable", 1),
+        ([_plan_reply([{"id": "s1", "query": "a", "depends_on": ["s9"]}])], "plan_invalid", 1),
+        ([_TWO_STEP, "not json at all"], "invalid_output", 2),
+        ([_TWO_STEP, LlmUnavailable("step failed")], "llm_unavailable", 2),
+    ],
+)
+def test_recoverable_plan_failures_top_up_without_another_step_or_llm_call(
+    replies: list[str | BaseException], expected: str, expected_calls: int
+) -> None:
+    """三类新增触发只增加一次原题检索，不增加步骤或 LLM 调用。"""
+    retriever = _big_retriever()
+    result = _agent(llm=FakeLlm(replies), retriever=retriever).search(
+        user_id="u", query="orig?", top_k=100
+    )
+
+    assert result.stats.stop_reason == expected
+    assert result.stats.llm_calls == expected_calls
+    assert result.stats.steps_executed == (1 if expected_calls == 2 else 0)
+    assert len([c for c in retriever.calls if c["query"] == "orig?"]) == 1
+    assert result.recovery.entered is True
+    assert result.recovery.target_top_k == 100
+    assert result.recovery.status == "success"
+    assert result.recovery.added_unique == (80 if expected_calls == 2 else 100)
+    assert result.rerank_query == "orig?"
+    assert result.recovery.rerank_query_mode == "original"
+
+
+def test_an_invalid_plan_without_recovery_candidates_falls_back() -> None:
+    retriever = FakeRetriever(default=[])
+    result = _agent(
+        llm=FakeLlm([_plan_reply([{"id": "s1", "query": "a", "depends_on": ["s9"]}])]),
+        retriever=retriever,
+    ).search(user_id="u", query="orig?", top_k=100)
     assert result.fallback_reason == "plan_invalid"
     assert result.candidates == ()
-
-
-def test_an_invalid_round_output_keeps_the_candidates_and_does_not_fall_back() -> None:
-    """已经攒到候选 ⇒ **不回退**：手上的证据比丢掉它们重来一遍更有价值。"""
-    llm = FakeLlm([_TWO_STEP, "not json at all"])
-    agent = _agent(llm=llm, retriever=FakeRetriever(default=_candidates("m1")))
-    result = agent.search(user_id="u", query="orig?", top_k=100)
-    assert result.stats.stop_reason == "invalid_output"
-    assert result.fallback_reason is None
-    assert [c.memory_id for c in result.candidates] == ["m1"]
+    assert result.recovery.status == "empty"
 
 
 def test_a_broken_step_llm_records_no_token_usage_for_that_round() -> None:
@@ -1442,20 +1476,12 @@ def test_a_failed_fallback_keeps_every_candidate_and_still_finishes() -> None:
     assert result.rerank_query == "orig?"
 
 
-def test_tooling_failures_never_trigger_the_recovery_branch() -> None:
-    """⛔ 拆解失败（`plan_invalid`）/ 逐轮 LLM 挂 **不触发**——**工具坏了**不是"模型说走不通"。
-
-    ⚠ 与 `conflict` 的区别正是这条用例存在的理由：**`conflict` 会触发**（见下一条）。
-    """
-    # 拆解失败（`plan_invalid`）
-    invalid = _agent(llm=FakeLlm([_plan_reply([{"id": "s1", "query": "a", "depends_on": ["s9"]}])]))
-    failed = invalid.search(user_id="u", query="orig?", top_k=100)
-    assert failed.recovery.entered is False and failed.recovery.status == "not_triggered"
-    # 逐轮 LLM 挂
+def test_retrieval_errors_never_trigger_the_recovery_branch() -> None:
+    """`retrieval_error` 不触发：恢复检索同样依赖检索器，重复调用只会重复失败。"""
     dead = _agent(
-        llm=FakeLlm([_TWO_STEP, LlmUnavailable("端点挂了")]), retriever=_big_retriever()
+        llm=FakeLlm([_TWO_STEP]), retriever=FakeRetriever(raises=RuntimeError("qdrant 挂了"))
     ).search(user_id="u", query="orig?", top_k=100)
-    assert dead.stats.stop_reason == "llm_unavailable"
+    assert dead.stats.stop_reason == "retrieval_error"
     assert dead.recovery.entered is False
 
 
